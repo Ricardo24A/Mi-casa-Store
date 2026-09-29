@@ -264,7 +264,7 @@ reset role;
 -- ---------------------------------------------------------------------------
 set local role authenticated;
 select set_config('request.jwt.claims',
-  '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}', true);
 
 do $$
 declare n integer;
@@ -275,6 +275,8 @@ begin
   assert (select count(*) from public.products where slug = 'p-inactivo') = 1, 'el admin ve también productos inactivos';
   assert (select count(*) from public.discounts) = current_setting('t.discounts')::integer + 3, 'el admin ve todos los descuentos';
   assert (select count(*) from public.store_settings) = 1, 'el admin ve los ajustes';
+  assert (select umbral_stock_bajo from public.store_settings) = 5, 'el umbral de poco stock arranca en 5';
+  assert (select enlaces_redes from public.store_settings) = '{}'::jsonb, 'sin enlaces de redes al inicio';
 
   insert into public.products (category_id, nombre, slug, precio)
   values ('10000000-0000-0000-0000-000000000001', 'Nuevo', 'p-nuevo', 15);
@@ -312,6 +314,50 @@ begin
 end $$;
 
 reset role;
+
+-- ---------------------------------------------------------------------------
+-- Administrador sin segundo factor (aal1 o sin claim): no es admin para RLS
+-- ---------------------------------------------------------------------------
+-- Se prueban los dos casos: sesión de contraseña (aal1) y token sin claim `aal`.
+do $$
+declare claims text; n integer;
+begin
+  foreach claims in array array[
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal1"}',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}'
+  ] loop
+    perform set_config('request.jwt.claims', claims, true);
+    set local role authenticated;
+
+    assert not public.is_admin(), 'un admin sin aal2 no es admin: ' || claims;
+    -- El proxy necesita leer su propio perfil para decidir entre enrolar y verificar
+    assert (select count(*) from public.profiles) = 1,
+      'un admin sin aal2 ve solo su propia fila de profiles';
+    assert (select role from public.profiles where id = '00000000-0000-0000-0000-0000000000a1') = 'admin',
+      'un admin sin aal2 puede leer su propio rol';
+    assert (select count(*) from public.orders) = 0, 'un admin sin aal2 no ve pedidos';
+    assert (select count(*) from public.payment_proofs) = 0, 'un admin sin aal2 no ve comprobantes';
+    assert (select count(*) from public.store_settings) = 0, 'un admin sin aal2 no ve ajustes';
+    assert (select count(*) from public.products where slug = 'p-inactivo') = 0,
+      'un admin sin aal2 no ve productos inactivos';
+
+    update public.store_settings set costo_envio = 99;
+    get diagnostics n = row_count;
+    assert n = 0, 'un admin sin aal2 no edita ajustes';
+
+    begin
+      insert into public.categories (nombre, slug) values ('x-aal1', 'x-aal1');
+      raise exception 'un admin sin aal2 no debe poder escribir categorías';
+    exception when insufficient_privilege then null; end;
+
+    begin
+      insert into storage.objects (bucket_id, name) values ('product-images', 'aal1.png');
+      raise exception 'un admin sin aal2 no debe poder subir imágenes';
+    exception when insufficient_privilege then null; end;
+
+    reset role;
+  end loop;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- Servidor (service_role): crea pedidos y comprobantes
@@ -401,7 +447,7 @@ update public.products set activo = false where id = '20000000-0000-0000-0000-00
 
 set local role authenticated;
 select set_config('request.jwt.claims',
-  '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}', true);
 
 do $$
 begin

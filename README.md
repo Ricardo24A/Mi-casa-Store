@@ -35,7 +35,8 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 2. `migrations/20260929000002_rls_grants.sql`: permisos (GRANT) y políticas RLS.
 3. `migrations/20260929000003_storage.sql`: buckets `product-images` (público) y `payment-proofs` (privado).
 4. `migrations/20260929000004_visible_categories.sql`: vista de categorías con productos activos.
-5. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
+5. `migrations/20260929000005_admin_aal2.sql`: `is_admin()` exige 2FA (aal2); umbral de poco stock y enlaces de redes en `store_settings`.
+6. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.
 
@@ -48,9 +49,26 @@ update public.profiles set role = 'admin'
 where id = (select id from auth.users where email = 'correo-del-dueno@ejemplo.com');
 ```
 
+### 2FA del administrador
+
+El dashboard exige un segundo factor (TOTP) en cada sesión. En el primer acceso el sistema pide enrolar una app de autenticación y sugiere registrar un segundo dispositivo. Desde la migración 5, `is_admin()` solo es verdadera con una sesión `aal2`: un administrador con solo la contraseña no puede leer ni escribir nada protegido, aunque llame a la API directamente.
+
+**Emergencia: el dueño perdió el dispositivo del 2FA y no tiene un segundo factor.** Un factor solo se quita desde Supabase, con acceso de propietario del proyecto:
+
+1. Comprueba la identidad del dueño por un canal fuera de la web (llamada o en persona).
+2. Supabase → Authentication → Users → abre el usuario → sección **Factors** → elimina el factor TOTP. Si tu versión del panel no lo muestra, ejecuta en el SQL Editor:
+
+   ```sql
+   delete from auth.mfa_factors
+   where user_id = (select id from auth.users where email = 'correo-del-dueno@ejemplo.com');
+   ```
+
+3. La siguiente vez que inicie sesión, el dashboard le pedirá enrolar un factor nuevo. Que registre dos dispositivos.
+4. Si sospechas que la cuenta fue comprometida, cambia también su contraseña y cierra sus sesiones (Users → Sign out user).
+
 ### Pruebas de la base de datos
 
-[`supabase/tests/rls.test.sql`](supabase/tests/rls.test.sql) prueba permisos, RLS, restricciones y la vista de categorías visibles. Corre dentro de una transacción con `ROLLBACK` y termina con `RLS OK`; si algo falla, lanza una excepción con el motivo. Ejecútalo en el SQL Editor **de un proyecto de desarrollo**, o en un Postgres local que simule los roles de Supabase.
+[`supabase/tests/rls.test.sql`](supabase/tests/rls.test.sql) prueba permisos, RLS (incluido el administrador con y sin 2FA), restricciones y la vista de categorías visibles. Corre dentro de una transacción con `ROLLBACK` y termina con `RLS OK`; si algo falla, lanza una excepción con el motivo. Ejecútalo en el SQL Editor **de un proyecto de desarrollo**, o en un Postgres local que simule los roles de Supabase.
 
 ## Comandos
 
