@@ -23,10 +23,12 @@
   --color-sale-soft: #f8ede8;
 
   --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, sans-serif;
+    var(--font-dm-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
 
   --radius-card: 0.75rem;
+
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 html {
@@ -43,6 +45,46 @@ body {
 :focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-accent-mid);
+  color: var(--color-ink);
+}
+
+/* Sobre fondos verdes (hero, footer, tarjetas) el foco verde no se vería: se usa el crema. */
+.on-dark :focus-visible {
+  outline-color: var(--color-bg);
+}
+
+/*
+ * Elevación ligera al pasar el cursor. Solo con puntero fino (en pantallas táctiles el hover
+ * se queda pegado), 180 ms, ease-out, y sin movimiento con prefers-reduced-motion.
+ */
+.lift {
+  transition:
+    transform 180ms var(--ease-out-strong),
+    box-shadow 180ms var(--ease-out-strong),
+    background-color 180ms var(--ease-out-strong),
+    border-color 180ms var(--ease-out-strong);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .lift:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 10px 20px -12px rgb(42 37 33 / 0.35);
+  }
+}
+
+.lift:active {
+  transform: translateY(0) scale(0.99);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lift:hover,
+  .lift:active {
+    transform: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
