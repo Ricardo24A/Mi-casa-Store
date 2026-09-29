@@ -9,7 +9,7 @@ Tienda online para un cliente de Ecuador que vende productos para el hogar. Dos 
 - **Cliente**: catálogo por categorías, carrito, checkout y pago por transferencia con comprobante.
 - **Dueño (dashboard)**: productos, categorías, precios, descuentos y pedidos.
 
-Precios de productos entre $1 y $100. Negocio nuevo. **No hay pasarela de pagos: el único método de pago es transferencia bancaria**, y el comprador sube la evidencia al pagar desde el carrito. Debe salir a producción, así que la seguridad no es opcional.
+Precios típicos entre $1 y $100, sin tope técnico (el dueño decide el precio de cada producto; solo debe ser mayor que 0). Negocio nuevo. **No hay pasarela de pagos: el único método de pago es transferencia bancaria**, y el comprador sube la evidencia al pagar desde el carrito. Debe salir a producción, así que la seguridad no es opcional.
 
 Hay dos prototipos aprobados por el cliente:
 
@@ -74,6 +74,19 @@ Ejemplos: **Cocina** (Utensilios, Organización, Cocción, Almacenamiento, Cuchi
 
 Las imágenes de categoría y de producto del prototipo son de Unsplash y de ejemplo. Las reales las sube el dueño.
 
+### Visibilidad de categorías (requisito del cliente)
+
+Las categorías y subcategorías **siempre existen en la base de datos** (el dueño las necesita para dar de alta productos), pero **la tienda solo muestra las que tienen productos**:
+
+- Una **subcategoría** es visible si tiene al menos un producto **activo**.
+- Una **categoría** es visible si alguna de sus subcategorías visibles tiene productos. Se muestra con sus subcategorías visibles y sus productos; las subcategorías vacías no aparecen.
+- Ejemplo: si el dueño solo publica una freidora de aire en Electrodomésticos → Freidoras de aire, en la tienda aparece únicamente "Electrodomésticos" con esa subcategoría y ese producto. Las otras siete categorías no se ven.
+- Se aplica en **todos** los lugares de la vista del cliente: menú principal, sección de categorías del home, filtros del catálogo, buscador y sitemap.
+- Si alguien abre a mano la URL de una categoría o subcategoría sin productos, responder **404** (no una página vacía).
+- Si la tienda todavía no tiene ningún producto activo, el home muestra un mensaje sencillo ("Estamos preparando el catálogo") en lugar de categorías vacías.
+- El resultado se actualiza solo: al crear, activar, desactivar o eliminar un producto en el dashboard, invalidar la caché de las páginas afectadas (`revalidateTag` / `revalidatePath`).
+- Un producto agotado (stock 0) pero **activo** sigue contando y se muestra como "Agotado". Para ocultarlo, el dueño lo desactiva.
+
 ## 5. Dashboard del dueño
 
 ### Alta de producto (flujo)
@@ -89,7 +102,7 @@ Las plantillas ya existen en `prototipos/cliente/src/data/index.ts` (`presetProd
 
 - Login del dueño con 2FA.
 - CRUD de productos: nombre, descripción, precio, stock, SKU, activo/inactivo, varias imágenes.
-- Gestión de categorías y de plantillas de productos comunes.
+- Gestión de categorías y de plantillas de productos comunes. El formulario de alta de producto lista **todas** las categorías; el listado de categorías del dashboard marca con una etiqueta ("Oculta en la tienda: sin productos activos") las que aún no tienen productos.
 - **Descuentos**: porcentaje o monto fijo; a un producto, una categoría o toda la tienda; con fechas; cupón opcional.
 - **Pedidos**: listado, detalle y estados: pendiente de pago, comprobante recibido, pagado, enviado, entregado, rechazado, cancelado o vencido.
 - **Revisión de comprobantes**: ver la imagen o PDF subido junto al monto y la referencia del pedido, y aprobar o rechazar (con motivo que se notifica al cliente).
@@ -99,18 +112,18 @@ Las plantillas ya existen en `prototipos/cliente/src/data/index.ts` (`presetProd
 ## 6. Vista del cliente
 
 - Inicio (ver "Contenido del home" abajo).
-- Catálogo por categoría y subcategoría, con búsqueda, filtros y orden.
+- Catálogo por categoría y subcategoría, con búsqueda, filtros y orden. **Solo aparecen las categorías y subcategorías que tienen productos activos** (ver sección 4, "Visibilidad de categorías").
 - Página de producto: galería, precio, precio con descuento, stock, agregar al carrito.
 - Carrito y checkout: datos de contacto, dirección de entrega y pago por transferencia.
 - Pantalla de pago: cuentas bancarias del negocio, **monto exacto** y **código de referencia del pedido** para el concepto. El comprador **sube el comprobante** (imagen o PDF), que es **obligatorio** para confirmar el pedido.
 - Confirmación: "Recibimos tu comprobante, lo revisaremos". El pedido no está "pagado" hasta que el dueño lo apruebe.
 - Seguimiento del estado del pedido y opción de subir otro comprobante si fue rechazado.
 - Páginas: contacto, privacidad, términos y envíos. Responsive, pensada primero para celular.
-- Rutas en español, como en el prototipo: `/catalogo`, `/categoria/[id]`, `/producto/[id]`, `/carrito`, `/checkout`, `/confirmacion`, `/admin/...`.
+- Rutas en español: `/catalogo`, `/categoria/[slug]` (el slug puede ser de una categoría o de una subcategoría; son únicos en toda la tabla), `/producto/[slug]`, `/carrito`, `/checkout`, `/confirmacion`, `/admin/...`.
 
 ### Contenido del home
 
-Estructura: header, hero simple, categorías, "Más populares", "Ofertas especiales" (productos reales con descuento) y footer.
+Estructura: header, hero simple, categorías (solo las que tienen productos), "Más populares", "Ofertas especiales" (productos reales con descuento) y footer.
 
 - **NO poner la sección "Compra con confianza"**: el banner verde con "Envío a todo el país", "Garantía de satisfacción", envío gratis, devoluciones, pago seguro y garantía. El cliente no la quiere en el home.
 - **No inventar cifras ni promesas.** El prototipo trae datos de ejemplo que no deben publicarse sin que el cliente los confirme: "4.8★ valoración media", "12K+ clientes felices", "100% garantía", "envío gratis desde $50", "devoluciones 30 días", "garantía 12 meses", "10% por suscribirte", "pago 100% seguro / encriptado". Hasta que el cliente confirme cada uno, no implementarlos.
@@ -143,35 +156,38 @@ Estructura: header, hero simple, categorías, "Más populares", "Ofertas especia
 
 Riesgo principal: comprobantes falsos o editados. El dueño aprueba solo después de ver el dinero reflejado en su cuenta, nunca solo por la imagen. Mostrar esta advertencia en el dashboard.
 
-## 9. Modelo de datos (borrador)
+## 9. Modelo de datos
 
-- `profiles` (id, rol: admin | customer)
-- `categories` (id, parent_id, nombre, slug, orden)
-- `product_templates` (id, category_id, nombre, descripcion_base, precio_sugerido, prefijo_sku)
-- `products` (id, category_id, nombre, slug, descripcion, precio, stock, sku, activo, destacado)
-- `product_images` (id, product_id, url, orden)
-- `discounts` (id, tipo, valor, alcance, target_id, codigo, inicia, termina, activo)
-- `orders` (id, referencia única, user_id o datos de invitado, estado, subtotal, descuento, envío, total, vence_en)
-- `order_items` (id, order_id, product_id, nombre, precio_unitario, cantidad): guardar el precio al momento de la compra
-- `payment_proofs` (id, order_id, archivo, hash, estado: en revisión | aprobado | rechazado, motivo, revisado_por, fecha)
-- `store_settings` (datos del negocio, cuentas bancarias, envío, descuento por transferencia, tiempo límite de pago)
+Aplicado en `supabase/migrations/`. Toda tabla tiene RLS activo y permisos (GRANT) explícitos: el proyecto no expone tablas automáticamente. Los clientes solo ven sus pedidos y comprobantes; solo el admin escribe en catálogo, ajustes y revisión de pagos; los pedidos y comprobantes los crea el servidor con `service_role`.
 
-Toda tabla con RLS activo. Los clientes solo ven sus pedidos y comprobantes; solo el admin escribe en catálogo, ajustes y revisión de pagos.
+- `profiles` (id → auth.users, role: admin | customer, full_name, phone). Todo usuario nuevo es `customer`; el rol admin solo se asigna a mano en la base.
+- `categories` (id, parent_id, nombre, slug único, imagen_url, orden). Dos niveles: categoría → subcategoría.
+- `product_templates` (id, category_id → subcategoría, nombre, descripcion_base, precio_sugerido, prefijo_sku)
+- `products` (id, category_id, nombre, slug único, descripcion, precio > 0 sin tope, stock, stock_reservado, sku único, activo, destacado)
+- `product_images` (id, product_id, url en el bucket `product-images`, orden)
+- `discounts` (id, nombre, tipo: porcentaje | monto_fijo, valor, alcance: producto | categoria | tienda, target_id, codigo de cupón opcional, inicia, termina, activo). El público solo lee los automáticos (sin cupón) y vigentes.
+- `orders` (id, referencia única `MC-XXXXXXXX` generada por trigger, user_id opcional, contacto_nombre/email/telefono, documento opcional, direccion_envio jsonb, access_token, estado, subtotal, descuento, descuento_transferencia, envio, total, cupon, notas, vence_en). El total debe cuadrar: `subtotal - descuento - descuento_transferencia + envio`.
+- `order_items` (id, order_id, product_id, nombre, precio_unitario, cantidad): precio y nombre congelados al comprar.
+- `payment_proofs` (id, order_id, archivo en el bucket privado `payment-proofs`, hash SHA-256, estado: en_revision | aprobado | rechazado, motivo, revisado_por, revisado_en). Un rechazo exige motivo.
+- `store_settings` (una sola fila: datos del negocio, cuentas_bancarias, costo_envio, envio_gratis_desde, descuento_transferencia_pct, horas_limite_pago)
+- Vista `visible_categories`: categorías y subcategorías con al menos un producto activo (sección 4).
+
+Reglas en la base de datos: un pedido no pasa a `comprobante_recibido` sin comprobante ni a `pagado` sin uno aprobado; `stock_reservado` no supera `stock`.
 
 ## 10. Seguridad (checklist)
 
-- [ ] RLS activo en todas las tablas y políticas probadas
+- [x] RLS activo en todas las tablas y políticas probadas (`supabase/tests/rls.test.sql`)
 - [ ] Rutas del dashboard protegidas por rol admin (proxy y servidor)
 - [ ] Precios y totales calculados solo en servidor
 - [ ] Validación con Zod en todas las entradas y acciones
-- [ ] **Comprobantes**: bucket privado, acceso al admin solo con URLs firmadas temporales
+- [ ] **Comprobantes**: bucket privado (hecho), acceso al admin solo con URLs firmadas temporales (Fase 5)
 - [ ] **Subida de archivos**: solo JPG, PNG o PDF, tamaño máximo (ej. 5 MB), verificar el tipo real del archivo (no solo la extensión), nombres generados por el servidor
 - [ ] Hash del comprobante para detectar el mismo archivo usado en varios pedidos
 - [ ] Rate limiting en login, checkout y subida de comprobantes
-- [ ] Imágenes de productos en bucket con reglas claras (lectura pública, escritura solo admin)
-- [ ] Secretos solo en variables de entorno, `.env` en `.gitignore`
+- [x] Imágenes de productos en bucket con reglas claras (lectura pública, escritura solo admin)
+- [x] Secretos solo en variables de entorno, `.env` en `.gitignore`
 - [ ] Cabeceras de seguridad (CSP, HSTS, X-Frame-Options), HTTPS obligatorio
-- [ ] Cookies `httpOnly`, `secure`, `sameSite`
+- [ ] Cookies de sesión con `secure` y `sameSite=lax`; sin tokens en `localStorage`; XSS mitigado con CSP estricta (al final). Nota: `@supabase/ssr` no usa `httpOnly` porque el navegador debe leer la sesión
 - [ ] 2FA para el dueño y contraseñas únicas; ninguna credencial de ejemplo en el código
 - [ ] `npm audit` y dependencias actualizadas antes de publicar
 - [ ] Backups automáticos de la base de datos
@@ -202,7 +218,8 @@ Una sesión de trabajo por fase. Al terminar cada una: probar, hacer commit y ac
 - Auth con roles.
 
 ### Fase 2: vista del cliente
-- Layout, tema y menú de categorías, siguiendo el prototipo (con la paleta de la sección 3 y sin lo que indica la sección 6).
+- **Primero**, una migración nueva (`supabase/migrations/`, la Fase 1 ya está aplicada en Supabase: no editar las anteriores) con la vista `public.visible_categories` para la regla de visibilidad (sección 4), con `security_invoker = true` para que respete RLS, que devuelva las categorías y subcategorías con al menos un producto activo, y con `grant select` explícito a `anon` y `authenticated` (el esquema tiene los permisos cerrados por defecto). Incluir pruebas en `supabase/tests/rls.test.sql`: una categoría sin productos activos no aparece, y aparece al activar un producto.
+- Layout, tema y menú de categorías (solo las visibles, sección 4), siguiendo el prototipo (con la paleta de la sección 3 y sin lo que indica la sección 6).
 - Catálogo, filtros, búsqueda, página de producto y carrito.
 
 ### Fase 3: dashboard del dueño
@@ -236,7 +253,7 @@ Una sesión de trabajo por fase. Al terminar cada una: probar, hacer commit y ac
 ## 14. Estado
 
 - [x] Fase 0 (base creada; falta conectar Supabase y Vercel con las cuentas del cliente)
-- [ ] Fase 1 (SQL y código listos; falta que Ricardo revise y aplique `supabase/migrations` y `seed.sql`, y correr `supabase/tests/rls.test.sql` en desarrollo)
+- [x] Fase 1 (esquema, RLS, buckets, seed y auth con roles aplicados; pruebas de RLS pasan)
 - [ ] Fase 2
 - [ ] Fase 3
 - [ ] Fase 4
@@ -253,6 +270,7 @@ Una sesión de trabajo por fase. Al terminar cada una: probar, hacer commit y ac
 - Tiempo límite para subir el comprobante (ej. 24 o 48 horas).
 - Compra como invitado o cuenta de cliente.
 - Facturación electrónica.
+- Categorías: confirmar con el cliente que un producto agotado pero activo mantiene visible su categoría (así está definido por ahora).
 
 ## 16. Notas técnicas del proyecto
 
@@ -260,6 +278,7 @@ Una sesión de trabajo por fase. Al terminar cada una: probar, hacer commit y ac
 - shadcn/ui no está instalado (su CLI necesita `ui.shadcn.com`). Escribir los componentes a mano con `cn()` de `src/lib/utils.ts`, o ejecutar `npx shadcn@latest init` en un equipo con acceso.
 - Rutas: `src/app/(tienda)` para la vista del cliente y `src/app/(admin)` para el dashboard.
 - Supabase: clientes en `src/lib/supabase/` (`client.ts` para navegador, `server.ts` para servidor). Variables en `.env.local` (ver `.env.example`).
+- Commits: título corto en español que describa el cambio (por ejemplo, "Catálogo con categorías visibles"). **No mencionar fases** ("Fase 2", etc.) ni en el título ni en el cuerpo.
 - `prototipos/` es solo referencia: está excluido de TypeScript (`tsconfig.json`) y de ESLint. No importar nada desde ahí.
 
 @AGENTS.md
