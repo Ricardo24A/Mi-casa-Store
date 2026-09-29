@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/*
+ * Paleta basada en el logo del cliente (ver CLAUDE.md, sección 3).
+ * Si los prototipos aprobados usan otros valores, se cambian solo aquí.
+ */
+@theme {
+  --color-bg: #fcf1df;
+  --color-bg-alt: #f5e4cb;
+  --color-surface: #ffffff;
+  --color-line: #e8d6bb;
+  --color-ink: #4a1f12;
+  --color-ink-soft: #6b5648;
+  --color-accent: #94462a;
+  --color-sale: #b8623f;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+
+  --radius-card: 0.75rem;
+}
+
+html {
+  background: var(--color-bg);
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
