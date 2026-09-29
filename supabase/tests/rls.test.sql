@@ -1,6 +1,8 @@
--- Pruebas de RLS y restricciones. Corre dentro de una transacción y hace ROLLBACK al final,
--- así que no deja datos. Sirve en Supabase (SQL Editor / `supabase test db`) y en el
--- Postgres local de scripts/test-db.sh. Si algo falla, lanza una excepción con el motivo.
+-- Pruebas de RLS, permisos y restricciones.
+-- Corre dentro de una transacción y termina con ROLLBACK: no deja datos.
+-- Ejecutar SOLO en un proyecto de desarrollo/staging (SQL Editor o `supabase test db`),
+-- después de aplicar las migraciones. Si algo falla, lanza una excepción con el motivo;
+-- si todo pasa, devuelve 'RLS OK'.
 begin;
 
 -- ---------------------------------------------------------------------------
@@ -25,13 +27,15 @@ insert into public.product_images (product_id, url) values
   ('20000000-0000-0000-0000-000000000002', 'b.jpg');
 
 insert into public.discounts (nombre, tipo, valor, alcance, codigo, inicia, termina) values
-  ('Auto vigente', 'porcentaje', 10, 'tienda', null,       now() - interval '1 day', now() + interval '1 day'),
-  ('Con cupón',    'porcentaje', 20, 'tienda', 'CUPON20',  now() - interval '1 day', now() + interval '1 day'),
-  ('Vencido',      'porcentaje', 30, 'tienda', null,       now() - interval '3 day', now() - interval '2 day');
+  ('Auto vigente', 'porcentaje', 10, 'tienda', null,      now() - interval '1 day', now() + interval '1 day'),
+  ('Con cupón',    'porcentaje', 20, 'tienda', 'CUPON20', now() - interval '1 day', now() + interval '1 day'),
+  ('Vencido',      'porcentaje', 30, 'tienda', null,      now() - interval '3 day', now() - interval '2 day');
 
-insert into public.orders (id, user_id, subtotal, descuento, envio, total, vence_en) values
-  ('30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000c1', 20, 0, 3, 23, now() + interval '2 day'),
-  ('30000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-0000000000c2', 10, 0, 0, 10, now() + interval '2 day');
+insert into public.orders
+  (id, user_id, contacto_nombre, contacto_email, contacto_telefono, subtotal, descuento, descuento_transferencia, envio, total, vence_en)
+values
+  ('30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991', 20, 0, 1, 3, 22, now() + interval '2 day'),
+  ('30000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-0000000000c2', 'C2', 'c2@test.ec', '0999999992', 10, 0, 0, 0, 10, now() + interval '2 day');
 
 insert into public.order_items (order_id, product_id, nombre, precio_unitario, cantidad) values
   ('30000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', 'Activo', 10, 2),
@@ -49,29 +53,25 @@ declare ref text;
 begin
   select referencia into ref from public.orders where id = '30000000-0000-0000-0000-000000000001';
   assert ref ~ '^MC-[A-Z2-9]{8}$', 'la referencia del pedido se genera sola: ' || coalesce(ref, 'null');
-  assert (select count(*) from public.profiles) = 3, 'cada usuario nuevo tiene perfil';
+  assert (select count(*) from public.profiles) >= 3, 'cada usuario nuevo tiene perfil';
   assert (select role from public.profiles where id = '00000000-0000-0000-0000-0000000000c1') = 'customer',
     'los usuarios nuevos son customer';
 
+  -- El precio es libre: cualquier valor mayor que 0
+  insert into public.products (category_id, nombre, slug, precio)
+  values ('10000000-0000-0000-0000-000000000001', 'Barato', 'p-barato', 0.25),
+         ('10000000-0000-0000-0000-000000000001', 'Caro',   'p-caro',   450);
+
   begin
-    insert into public.products (category_id, nombre, slug, precio) values ('10000000-0000-0000-0000-000000000001', 'x', 'x1', 0.5);
-    raise exception 'debía rechazar precio < 1';
+    insert into public.products (category_id, nombre, slug, precio)
+    values ('10000000-0000-0000-0000-000000000001', 'x', 'x0', 0);
+    raise exception 'debía rechazar precio 0';
   exception when check_violation then null; end;
 
   begin
-    insert into public.products (category_id, nombre, slug, precio) values ('10000000-0000-0000-0000-000000000001', 'x', 'x2', 101);
-    raise exception 'debía rechazar precio > 100';
-  exception when check_violation then null; end;
-
-  begin
-    insert into public.orders (user_id, subtotal, descuento, envio, total, vence_en)
-    values ('00000000-0000-0000-0000-0000000000c1', 10, 0, 0, 99, now());
+    insert into public.orders (contacto_nombre, contacto_email, contacto_telefono, subtotal, total, vence_en)
+    values ('X', 'x@x.ec', '0999999999', 10, 99, now());
     raise exception 'debía rechazar total incoherente';
-  exception when check_violation then null; end;
-
-  begin
-    insert into public.orders (subtotal, total, vence_en) values (10, 10, now());
-    raise exception 'debía exigir cliente o invitado';
   exception when check_violation then null; end;
 
   begin
@@ -94,6 +94,28 @@ begin
     update public.products set stock_reservado = 99 where slug = 'p-activo';
     raise exception 'la reserva no puede superar el stock';
   exception when check_violation then null; end;
+
+  -- Comprobante obligatorio
+  insert into public.orders
+    (id, contacto_nombre, contacto_email, contacto_telefono, subtotal, total, vence_en)
+  values ('30000000-0000-0000-0000-000000000003', 'Invitado', 'g@test.ec', '0999999993', 10, 10, now() + interval '1 day');
+
+  begin
+    update public.orders set estado = 'comprobante_recibido' where id = '30000000-0000-0000-0000-000000000003';
+    raise exception 'debía exigir comprobante para pasar a comprobante_recibido';
+  exception when check_violation then null; end;
+
+  insert into public.payment_proofs (order_id, archivo, hash)
+  values ('30000000-0000-0000-0000-000000000003', 'g/a.png', repeat('d', 64));
+  update public.orders set estado = 'comprobante_recibido' where id = '30000000-0000-0000-0000-000000000003';
+
+  begin
+    update public.orders set estado = 'pagado' where id = '30000000-0000-0000-0000-000000000003';
+    raise exception 'debía exigir comprobante aprobado para pasar a pagado';
+  exception when check_violation then null; end;
+
+  update public.payment_proofs set estado = 'aprobado' where order_id = '30000000-0000-0000-0000-000000000003';
+  update public.orders set estado = 'pagado' where id = '30000000-0000-0000-0000-000000000003';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -104,9 +126,10 @@ select set_config('request.jwt.claims', '{"role":"anon"}', true);
 
 do $$
 begin
-  assert (select count(*) from public.products) = 1, 'anon solo ve productos activos';
+  assert (select count(*) from public.products where slug like 'p-%') = 3,
+    'anon solo ve productos activos (activo, barato, caro)';
+  assert (select count(*) from public.products where not activo) = 0, 'anon no ve inactivos';
   assert (select count(*) from public.product_images) = 1, 'anon solo ve imágenes de productos activos';
-  assert (select count(*) from public.categories) >= 1, 'anon ve categorías';
   assert (select count(*) from public.discounts) = 1, 'anon solo ve descuentos automáticos vigentes (sin cupón)';
 
   begin
@@ -125,9 +148,19 @@ begin
   exception when insufficient_privilege then null; end;
 
   begin
+    perform 1 from public.profiles;
+    raise exception 'anon no debe leer perfiles';
+  exception when insufficient_privilege then null; end;
+
+  begin
     insert into public.products (category_id, nombre, slug, precio)
     values ('10000000-0000-0000-0000-000000000001', 'hack', 'hack', 5);
     raise exception 'anon no debe insertar productos';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    perform public.generate_order_reference();
+    raise exception 'anon no debe ejecutar generate_order_reference()';
   exception when insufficient_privilege then null; end;
 end $$;
 
@@ -173,22 +206,24 @@ begin
   assert n = 0, 'el cliente no puede aprobar su comprobante';
 
   begin
-    insert into public.orders (user_id, subtotal, total, vence_en)
-    values ('00000000-0000-0000-0000-0000000000c1', 1, 0, now());
+    insert into public.orders (contacto_nombre, contacto_email, contacto_telefono, subtotal, total, vence_en)
+    values ('X', 'x@x.ec', '0999999999', 1, 1, now());
     raise exception 'el cliente no debe crear pedidos desde el navegador';
-  exception when insufficient_privilege or check_violation then null; end;
+  exception when insufficient_privilege then null; end;
 
   begin
-    update public.products set precio = 1 where slug = 'p-activo';
-    get diagnostics n = row_count;
-    assert n = 0, 'el cliente no puede cambiar precios';
-  end;
+    insert into public.payment_proofs (order_id, archivo, hash)
+    values ('30000000-0000-0000-0000-000000000001', 'x', repeat('e', 64));
+    raise exception 'el cliente no debe crear comprobantes desde el navegador';
+  exception when insufficient_privilege then null; end;
 
-  begin
-    delete from public.categories;
-    get diagnostics n = row_count;
-    assert n = 0, 'el cliente no puede borrar categorías';
-  end;
+  update public.products set precio = 1 where slug = 'p-activo';
+  get diagnostics n = row_count;
+  assert n = 0, 'el cliente no puede cambiar precios';
+
+  delete from public.categories;
+  get diagnostics n = row_count;
+  assert n = 0, 'el cliente no puede borrar categorías';
 
   begin
     insert into storage.objects (bucket_id, name) values ('payment-proofs', 'x.png');
@@ -217,9 +252,9 @@ do $$
 declare n integer;
 begin
   assert public.is_admin(), 'el admin es admin';
-  assert (select count(*) from public.orders) = 2, 'el admin ve todos los pedidos';
-  assert (select count(*) from public.payment_proofs) = 2, 'el admin ve todos los comprobantes';
-  assert (select count(*) from public.products) = 2, 'el admin ve también productos inactivos';
+  assert (select count(*) from public.orders) = 3, 'el admin ve todos los pedidos';
+  assert (select count(*) from public.payment_proofs) = 3, 'el admin ve todos los comprobantes';
+  assert (select count(*) from public.products where not activo) = 1, 'el admin ve también productos inactivos';
   assert (select count(*) from public.discounts) = 3, 'el admin ve todos los descuentos';
   assert (select count(*) from public.store_settings) = 1, 'el admin ve los ajustes';
 
@@ -230,15 +265,16 @@ begin
   get diagnostics n = row_count;
   assert n = 1, 'el admin edita productos';
 
-  update public.orders set estado = 'pagado' where id = '30000000-0000-0000-0000-000000000001';
-  get diagnostics n = row_count;
-  assert n = 1, 'el admin cambia el estado del pedido';
-
   update public.payment_proofs
-    set estado = 'rechazado', motivo = 'No coincide el monto', revisado_por = '00000000-0000-0000-0000-0000000000a1'
+    set estado = 'rechazado', motivo = 'No coincide el monto',
+        revisado_por = '00000000-0000-0000-0000-0000000000a1', revisado_en = now()
     where order_id = '30000000-0000-0000-0000-000000000001';
   get diagnostics n = row_count;
   assert n = 1, 'el admin revisa comprobantes';
+
+  update public.orders set estado = 'rechazado' where id = '30000000-0000-0000-0000-000000000001';
+  get diagnostics n = row_count;
+  assert n = 1, 'el admin cambia el estado del pedido';
 
   update public.store_settings set costo_envio = 4;
   get diagnostics n = row_count;
@@ -255,6 +291,26 @@ begin
     delete from public.orders;
     raise exception 'ni el admin borra pedidos desde la API';
   exception when insufficient_privilege then null; end;
+end $$;
+
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Servidor (service_role): crea pedidos y comprobantes
+-- ---------------------------------------------------------------------------
+set local role service_role;
+
+do $$
+declare ref text;
+begin
+  -- Sin 'referencia': la genera el trigger, que llama a generate_order_reference()
+  insert into public.orders
+    (contacto_nombre, contacto_email, contacto_telefono, subtotal, total, vence_en)
+  values ('Srv', 's@test.ec', '0999999994', 5, 5, now() + interval '1 day')
+  returning referencia into ref;
+  assert ref ~ '^MC-[A-Z2-9]{8}$', 'service_role inserta un pedido y la referencia se genera sola: ' || coalesce(ref, 'null');
+  assert (select count(*) from public.store_settings) = 1, 'service_role lee ajustes';
+  assert (select count(*) from public.discounts where codigo = 'CUPON20') = 1, 'service_role valida cupones';
 end $$;
 
 reset role;

@@ -1,10 +1,14 @@
--- Fase 1 · Seguridad a nivel de fila (RLS), permisos y buckets de Storage.
+-- Fase 1 · RLS y permisos.
 --
--- Modelo:
---   * anon / authenticated: solo lo que las políticas permiten.
---   * admin (profiles.role = 'admin'): escribe catálogo, ajustes y revisión de pagos.
---   * Pedidos y comprobantes NUNCA se crean desde el navegador: los crea el servidor
---     con la clave service_role (que se salta RLS) después de validar y recalcular totales.
+-- El proyecto tiene desactivado "Automatically expose new tables": ninguna tabla nueva
+-- recibe permisos por defecto, así que aquí se concede explícitamente lo mínimo.
+-- Dos capas: GRANT (¿puede el rol tocar la tabla/columna?) y RLS (¿qué filas?).
+--
+--   anon          → solo lectura del catálogo público.
+--   authenticated → lo anterior + lo suyo (pedidos, comprobantes); el admin además escribe
+--                   catálogo, ajustes y revisión de pagos (política is_admin()).
+--   service_role  → el servidor de Next.js: crea pedidos y comprobantes, valida cupones y
+--                   lee las cuentas bancarias. Se salta RLS, pero necesita GRANT.
 
 -- ---------------------------------------------------------------------------
 -- Helper de rol
@@ -22,41 +26,14 @@ as $$
   );
 $$;
 
-revoke all on function public.is_admin() from public;
-grant execute on function public.is_admin() to anon, authenticated;
-
--- Las funciones internas no deben poder llamarse desde la API.
-revoke all on function public.handle_new_user() from public, anon, authenticated;
-revoke all on function public.generate_order_reference() from public, anon, authenticated;
-
--- ---------------------------------------------------------------------------
--- Permisos base: se quita todo y se concede lo mínimo (RLS decide las filas)
--- ---------------------------------------------------------------------------
-revoke all on
-  public.profiles, public.categories, public.product_templates, public.products,
-  public.product_images, public.discounts, public.orders, public.order_items,
-  public.payment_proofs, public.store_settings
-from anon, authenticated;
-
--- Catálogo público (lectura); escritura solo pasa si la política confirma admin.
-grant select on public.categories, public.products, public.product_images, public.discounts
-  to anon, authenticated;
-grant insert, update, delete on public.categories, public.products, public.product_images,
-  public.discounts, public.product_templates to authenticated;
-grant select on public.product_templates to authenticated;
-
-grant select on public.profiles to authenticated;
--- El usuario solo puede cambiar su nombre y teléfono; nunca su rol.
-grant update (full_name, phone) on public.profiles to authenticated;
-
-grant select on public.orders, public.order_items, public.payment_proofs to authenticated;
-grant update (estado, notas) on public.orders to authenticated;
-grant update (estado, motivo, revisado_por, revisado_en) on public.payment_proofs to authenticated;
-
-grant select, update on public.store_settings to authenticated;
+revoke all on all functions in schema public from public, anon, authenticated;
+revoke all on all tables in schema public from anon, authenticated;
+grant execute on function public.is_admin() to anon, authenticated, service_role;
+-- La llama el trigger orders_set_reference cuando el servidor (service_role) inserta un pedido.
+grant execute on function public.generate_order_reference() to service_role;
 
 -- ---------------------------------------------------------------------------
--- Activar RLS
+-- Activar RLS (explícito, aunque el proyecto ya lo active automáticamente)
 -- ---------------------------------------------------------------------------
 alter table public.profiles enable row level security;
 alter table public.categories enable row level security;
@@ -68,6 +45,39 @@ alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
 alter table public.payment_proofs enable row level security;
 alter table public.store_settings enable row level security;
+
+-- ---------------------------------------------------------------------------
+-- GRANTs
+-- ---------------------------------------------------------------------------
+grant all on
+  public.profiles, public.categories, public.product_templates, public.products,
+  public.product_images, public.discounts, public.orders, public.order_items,
+  public.payment_proofs, public.store_settings
+to service_role;
+
+-- Catálogo público
+grant select on public.categories, public.products, public.product_images, public.discounts
+  to anon, authenticated;
+
+-- Escritura del catálogo: el GRANT lo abre a 'authenticated', la política solo deja pasar al admin.
+grant insert, update, delete on
+  public.categories, public.products, public.product_images, public.discounts,
+  public.product_templates
+to authenticated;
+grant select on public.product_templates to authenticated;
+
+-- Perfil: cada quien cambia solo su nombre y teléfono, nunca su rol.
+grant select on public.profiles to authenticated;
+grant update (full_name, phone) on public.profiles to authenticated;
+
+-- Pedidos y comprobantes: lectura propia; el admin solo actualiza estado/revisión.
+-- No hay INSERT ni DELETE para authenticated: los pedidos los crea el servidor.
+grant select on public.orders, public.order_items, public.payment_proofs to authenticated;
+grant update (estado, notas) on public.orders to authenticated;
+grant update (estado, motivo, revisado_por, revisado_en) on public.payment_proofs to authenticated;
+
+-- Ajustes: solo admin (las cuentas bancarias se muestran al comprador desde el servidor).
+grant select, update on public.store_settings to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- profiles
@@ -127,7 +137,7 @@ create policy product_images_admin_update on public.product_images
 create policy product_images_admin_delete on public.product_images
   for delete to authenticated using (public.is_admin());
 
--- Público: solo descuentos automáticos (sin cupón) y vigentes. Los cupones no se listan:
+-- Público: solo descuentos automáticos (sin cupón) y vigentes. Los cupones no se listan;
 -- el servidor los valida con service_role.
 create policy discounts_select on public.discounts
   for select to anon, authenticated
@@ -148,8 +158,7 @@ create policy discounts_admin_delete on public.discounts
   for delete to authenticated using (public.is_admin());
 
 -- ---------------------------------------------------------------------------
--- Pedidos y comprobantes: el cliente solo lee lo suyo; el admin lee y revisa.
--- No hay políticas de INSERT/DELETE: solo el servidor (service_role) crea pedidos.
+-- Pedidos y comprobantes
 -- ---------------------------------------------------------------------------
 create policy orders_select on public.orders
   for select to authenticated
@@ -180,43 +189,9 @@ create policy payment_proofs_admin_update on public.payment_proofs
   for update to authenticated using (public.is_admin()) with check (public.is_admin());
 
 -- ---------------------------------------------------------------------------
--- Ajustes de la tienda: solo admin. (Las cuentas bancarias se muestran al comprador
--- desde el servidor, en la pantalla de pago.)
+-- Ajustes de la tienda
 -- ---------------------------------------------------------------------------
 create policy store_settings_admin_select on public.store_settings
   for select to authenticated using (public.is_admin());
 create policy store_settings_admin_update on public.store_settings
   for update to authenticated using (public.is_admin()) with check (public.is_admin());
-
--- ---------------------------------------------------------------------------
--- Storage
--- ---------------------------------------------------------------------------
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values
-  -- Imágenes de productos: lectura pública, escritura solo admin.
-  ('product-images', 'product-images', true, 5242880,
-   array['image/jpeg', 'image/png', 'image/webp']),
-  -- Comprobantes: privado. El navegador nunca lo toca; el servidor sube con service_role
-  -- y el admin los ve mediante URLs firmadas temporales.
-  ('payment-proofs', 'payment-proofs', false, 5242880,
-   array['image/jpeg', 'image/png', 'application/pdf'])
-on conflict (id) do update
-  set public = excluded.public,
-      file_size_limit = excluded.file_size_limit,
-      allowed_mime_types = excluded.allowed_mime_types;
-
-create policy product_images_storage_admin_insert on storage.objects
-  for insert to authenticated
-  with check (bucket_id = 'product-images' and public.is_admin());
-create policy product_images_storage_admin_update on storage.objects
-  for update to authenticated
-  using (bucket_id = 'product-images' and public.is_admin())
-  with check (bucket_id = 'product-images' and public.is_admin());
-create policy product_images_storage_admin_delete on storage.objects
-  for delete to authenticated
-  using (bucket_id = 'product-images' and public.is_admin());
-
--- Solo el admin puede pedir URLs firmadas de comprobantes.
-create policy payment_proofs_storage_admin_select on storage.objects
-  for select to authenticated
-  using (bucket_id = 'payment-proofs' and public.is_admin());

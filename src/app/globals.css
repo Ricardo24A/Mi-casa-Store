@@ -1,18 +1,26 @@
 @import "tailwindcss";
 
 /*
- * Paleta basada en el logo del cliente (ver CLAUDE.md, sección 3).
- * Si los prototipos aprobados usan otros valores, se cambian solo aquí.
+ * Paleta (ver CLAUDE.md, sección 3). Base #F0DFC6 pedida por el cliente;
+ * verde y terracota tomados del prototipo aprobado. Se cambia solo aquí.
  */
 @theme {
-  --color-bg: #fcf1df;
-  --color-bg-alt: #f5e4cb;
+  --color-bg: #f0dfc6;
+  --color-bg-alt: #e9d3b4;
   --color-surface: #ffffff;
-  --color-line: #e8d6bb;
-  --color-ink: #4a1f12;
-  --color-ink-soft: #6b5648;
-  --color-accent: #94462a;
+  --color-soft: #f9f1e6;
+  --color-line: #d9c5a6;
+  --color-ink: #2a2521;
+  --color-ink-soft: #5e554b;
+
+  --color-accent: #3e5c4b;
+  --color-accent-hover: #2e4437;
+  --color-accent-soft: #edf3ef;
+  --color-accent-mid: #d1e4d9;
+
   --color-sale: #b8623f;
+  --color-sale-ink: #94462a;
+  --color-sale-soft: #f8ede8;
 
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",

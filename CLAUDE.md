@@ -236,7 +236,7 @@ Una sesión de trabajo por fase. Al terminar cada una: probar, hacer commit y ac
 ## 14. Estado
 
 - [x] Fase 0 (base creada; falta conectar Supabase y Vercel con las cuentas del cliente)
-- [ ] Fase 1
+- [ ] Fase 1 (SQL y código listos; falta que Ricardo revise y aplique `supabase/migrations` y `seed.sql`, y correr `supabase/tests/rls.test.sql` en desarrollo)
 - [ ] Fase 2
 - [ ] Fase 3
 - [ ] Fase 4
