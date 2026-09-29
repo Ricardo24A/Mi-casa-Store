@@ -42,3 +42,8 @@ next-env.d.ts
 
 # permitir la plantilla de variables (sin secretos)
 !.env.example
+
+# herramientas de Claude y skills instaladas
+.claude/
+.agents/
+.impeccable/
