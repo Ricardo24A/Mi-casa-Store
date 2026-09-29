@@ -21,6 +21,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Habilita 'use cache' (catálogo público en caché, invalidado por etiqueta).
+  cacheComponents: true,
   poweredByHeader: false,
   images: {
     remotePatterns: supabaseHost
