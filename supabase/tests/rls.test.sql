@@ -6,6 +6,21 @@
 begin;
 
 -- ---------------------------------------------------------------------------
+-- Línea base: lo que ya hay en la base antes de insertar los datos de prueba.
+-- Las aserciones comparan contra estos valores (antes + lo insertado), así las pruebas
+-- funcionan también con pedidos y descuentos reales. Se guardan en variables de sesión
+-- (set_config) porque las leen roles distintos y una tabla temporal no.
+-- ---------------------------------------------------------------------------
+select
+  set_config('t.orders',        (select count(*) from public.orders)::text, true),
+  set_config('t.proofs',        (select count(*) from public.payment_proofs)::text, true),
+  set_config('t.discounts',     (select count(*) from public.discounts)::text, true),
+  -- descuentos que ve un visitante: automáticos (sin cupón) y vigentes
+  set_config('t.discounts_pub', (select count(*) from public.discounts
+                                 where activo and codigo is null and inicia <= now()
+                                   and (termina is null or termina > now()))::text, true);
+
+-- ---------------------------------------------------------------------------
 -- Datos de prueba (como superusuario)
 -- ---------------------------------------------------------------------------
 insert into auth.users (id) values
@@ -28,7 +43,7 @@ insert into public.product_images (product_id, url) values
 
 insert into public.discounts (nombre, tipo, valor, alcance, codigo, inicia, termina) values
   ('Auto vigente', 'porcentaje', 10, 'tienda', null,      now() - interval '1 day', now() + interval '1 day'),
-  ('Con cupón',    'porcentaje', 20, 'tienda', 'CUPON20', now() - interval '1 day', now() + interval '1 day'),
+  ('Con cupón',    'porcentaje', 20, 'tienda', 'TESTCUP20', now() - interval '1 day', now() + interval '1 day'),
   ('Vencido',      'porcentaje', 30, 'tienda', null,      now() - interval '3 day', now() - interval '2 day');
 
 insert into public.orders
@@ -126,11 +141,14 @@ select set_config('request.jwt.claims', '{"role":"anon"}', true);
 
 do $$
 begin
-  assert (select count(*) from public.products where slug like 'p-%') = 3,
+  assert (select count(*) from public.products where slug in ('p-activo', 'p-barato', 'p-caro')) = 3,
     'anon solo ve productos activos (activo, barato, caro)';
   assert (select count(*) from public.products where not activo) = 0, 'anon no ve inactivos';
-  assert (select count(*) from public.product_images) = 1, 'anon solo ve imágenes de productos activos';
-  assert (select count(*) from public.discounts) = 1, 'anon solo ve descuentos automáticos vigentes (sin cupón)';
+  assert (select count(*) from public.products where slug = 'p-inactivo') = 0, 'anon no ve el producto inactivo de prueba';
+  assert (select count(*) from public.product_images where url in ('a.jpg', 'b.jpg')) = 1, 'anon solo ve imágenes de productos activos';
+  -- antes + 1: solo 'Auto vigente' suma; el cupón y el vencido no se ven
+  assert (select count(*) from public.discounts) = current_setting('t.discounts_pub')::integer + 1,
+    'anon solo ve descuentos automáticos vigentes (sin cupón)';
 
   begin
     perform 1 from public.orders;
@@ -252,10 +270,10 @@ do $$
 declare n integer;
 begin
   assert public.is_admin(), 'el admin es admin';
-  assert (select count(*) from public.orders) = 3, 'el admin ve todos los pedidos';
-  assert (select count(*) from public.payment_proofs) = 3, 'el admin ve todos los comprobantes';
-  assert (select count(*) from public.products where not activo) = 1, 'el admin ve también productos inactivos';
-  assert (select count(*) from public.discounts) = 3, 'el admin ve todos los descuentos';
+  assert (select count(*) from public.orders) = current_setting('t.orders')::integer + 3, 'el admin ve todos los pedidos';
+  assert (select count(*) from public.payment_proofs) = current_setting('t.proofs')::integer + 3, 'el admin ve todos los comprobantes';
+  assert (select count(*) from public.products where slug = 'p-inactivo') = 1, 'el admin ve también productos inactivos';
+  assert (select count(*) from public.discounts) = current_setting('t.discounts')::integer + 3, 'el admin ve todos los descuentos';
   assert (select count(*) from public.store_settings) = 1, 'el admin ve los ajustes';
 
   insert into public.products (category_id, nombre, slug, precio)
@@ -310,7 +328,93 @@ begin
   returning referencia into ref;
   assert ref ~ '^MC-[A-Z2-9]{8}$', 'service_role inserta un pedido y la referencia se genera sola: ' || coalesce(ref, 'null');
   assert (select count(*) from public.store_settings) = 1, 'service_role lee ajustes';
-  assert (select count(*) from public.discounts where codigo = 'CUPON20') = 1, 'service_role valida cupones';
+  assert (select count(*) from public.discounts where codigo = 'TESTCUP20') = 1, 'service_role valida cupones';
+end $$;
+
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Visibilidad de categorías (vista visible_categories)
+-- ---------------------------------------------------------------------------
+-- Categoría con dos subcategorías; solo 'vis-hija' recibe un producto.
+insert into public.categories (id, parent_id, nombre, slug) values
+  ('10000000-0000-0000-0000-0000000000f1', null,                                   'Vis padre',       'vis-padre'),
+  ('10000000-0000-0000-0000-0000000000f2', '10000000-0000-0000-0000-0000000000f1', 'Vis hija',        'vis-hija'),
+  ('10000000-0000-0000-0000-0000000000f3', '10000000-0000-0000-0000-0000000000f1', 'Vis hija vacía',  'vis-hija-vacia');
+
+-- Empieza INACTIVO
+insert into public.products (id, category_id, nombre, slug, precio, stock, activo)
+values ('20000000-0000-0000-0000-0000000000f1', '10000000-0000-0000-0000-0000000000f2',
+        'Vis producto', 'vis-producto', 5, 3, false);
+
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon"}', true);
+
+do $$
+begin
+  assert (select count(*) from public.visible_categories
+          where slug in ('vis-padre', 'vis-hija', 'vis-hija-vacia')) = 0,
+    'sin productos activos no aparece ni la categoría ni sus subcategorías';
+  assert (select count(*) from public.visible_categories where slug = 'cat-test') = 0,
+    'una categoría sin subcategorías con productos no aparece';
+end $$;
+
+reset role;
+
+-- Se ACTIVA el producto: aparecen la subcategoría con producto y su categoría, no la vacía
+update public.products set activo = true where id = '20000000-0000-0000-0000-0000000000f1';
+
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon"}', true);
+
+do $$
+begin
+  assert (select count(*) from public.visible_categories where slug = 'vis-padre') = 1,
+    'al activar un producto aparece su categoría';
+  assert (select count(*) from public.visible_categories where slug = 'vis-hija') = 1,
+    'al activar un producto aparece su subcategoría';
+  assert (select count(*) from public.visible_categories where slug = 'vis-hija-vacia') = 0,
+    'la subcategoría sin productos sigue oculta aunque su categoría sea visible';
+  assert (select parent_id from public.visible_categories where slug = 'vis-hija')
+         = '10000000-0000-0000-0000-0000000000f1', 'la vista conserva parent_id';
+end $$;
+
+reset role;
+
+-- Agotado (stock 0) pero activo: sigue visible
+update public.products set stock = 0 where id = '20000000-0000-0000-0000-0000000000f1';
+
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}', true);
+
+do $$
+begin
+  assert (select count(*) from public.visible_categories where slug in ('vis-padre', 'vis-hija')) = 2,
+    'un producto agotado pero activo mantiene visibles su categoría y subcategoría (cliente)';
+end $$;
+
+reset role;
+
+-- Se DESACTIVA: desaparecen para todos, incluido el admin (aunque él vea el producto inactivo)
+update public.products set activo = false where id = '20000000-0000-0000-0000-0000000000f1';
+
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+do $$
+begin
+  assert public.is_admin(), 'el usuario de la prueba es admin';
+  assert (select count(*) from public.products where slug = 'vis-producto') = 1,
+    'el admin sigue viendo el producto inactivo en products';
+  assert (select count(*) from public.visible_categories where slug in ('vis-padre', 'vis-hija')) = 0,
+    'un producto inactivo no hace visible la categoría, ni siquiera para el admin';
+
+  begin
+    insert into public.visible_categories (nombre, slug) values ('x', 'x');
+    raise exception 'la vista no debe ser escribible desde la API';
+  exception when insufficient_privilege then null; end;
 end $$;
 
 reset role;
