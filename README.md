@@ -39,7 +39,9 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 6. `migrations/20260929000006_customer_accounts.sql`: nombre del registro en el perfil, direcciones de envío del cliente y documentación de `orders.user_id`.
 7. `migrations/20260929000007_create_order.sql`: función `create_order` (pedido atómico con stock apartado, solo `service_role`).
 8. `migrations/20260929000008_cart_items.sql`: carrito de la cuenta (`cart_items`, con RLS por dueño) y `create_order` actualizada para vaciarlo al crear el pedido.
-9. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
+9. `migrations/20260929000009_payment_proof_base.sql`: restricciones de stock verificadas, `create_order` valida cantidades, bucket de comprobantes a 4 MB y `submit_payment_proof`.
+10. `migrations/20260929000010_replace_payment_proof.sql`: estado `reemplazado`, un solo comprobante activo por pedido (historial, máximo 3), transiciones válidas del comprobante y `submit_payment_proof` con reemplazo.
+11. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.
 

@@ -3,12 +3,16 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { CheckCircle2 } from "lucide-react";
+import { ProofSection } from "@/components/orders/proof-section";
 import { buttonClass } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { requireCustomer } from "@/lib/auth";
 import { formatUsd } from "@/lib/format";
+import { ORDER_STATUS_LABEL } from "@/lib/order-status";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { ProofSummary } from "@/lib/proof-rules";
+import type { OrderStatus } from "@/types/database";
 import { z } from "zod";
 
 export const metadata: Metadata = {
@@ -40,7 +44,7 @@ async function ConfirmationContent({ params }: { params: PageProps<"/confirmacio
   const supabase = await createClient();
   const { data: order } = await supabase
     .from("orders")
-    .select("referencia, total, vence_en, estado")
+    .select("id, referencia, total, vence_en, estado, payment_proofs(estado, motivo, created_at)")
     .eq("referencia", referencia.data)
     .eq("user_id", userId)
     .maybeSingle();
@@ -94,6 +98,37 @@ async function ConfirmationContent({ params }: { params: PageProps<"/confirmacio
             ))}
           </ul>
         )}
+
+        <section aria-labelledby="comprobante" className="mt-8">
+          <h2 id="comprobante" className="mb-3 text-xl font-semibold text-ink">
+            Comprobante de pago
+          </h2>
+          {order.estado === "pendiente_pago" && (
+            <p className="mb-4 text-sm text-ink-soft">
+              Haz la transferencia por el monto exacto, con la referencia como concepto, y sube aquí la foto o
+              el PDF del comprobante. El pedido queda confirmado cuando lo subes; se marca como pagado cuando
+              lo revisemos.
+            </p>
+          )}
+          {order.estado === "comprobante_recibido" && (
+            <p role="status" className="mb-4 rounded-lg bg-accent-soft px-4 py-3 text-sm text-accent">
+              Recibimos tu comprobante, lo revisaremos.
+            </p>
+          )}
+          {order.estado !== "pendiente_pago" && order.estado !== "comprobante_recibido" && (
+            <p className="mb-4 text-sm text-ink-soft">
+              Estado del pedido:{" "}
+              <span className="font-semibold text-ink">{ORDER_STATUS_LABEL[order.estado as OrderStatus]}</span>
+            </p>
+          )}
+          <ProofSection
+            referencia={order.referencia}
+            orderStatus={order.estado}
+            dueAt={order.vence_en}
+            now={new Date()}
+            proofs={(order.payment_proofs ?? []) as ProofSummary[]}
+          />
+        </section>
 
         <div className="mt-8 flex flex-wrap gap-3">
           <Link href="/cuenta" className={buttonClass("primary")}>

@@ -16,4 +16,5 @@ export const PROOF_STATUS_LABEL: Record<ProofStatus, string> = {
   en_revision: "En revisión",
   aprobado: "Aprobado",
   rechazado: "Rechazado",
+  reemplazado: "Reemplazado",
 };

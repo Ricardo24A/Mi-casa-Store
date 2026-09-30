@@ -24,6 +24,11 @@ const nextConfig: NextConfig = {
   // Habilita 'use cache' (catálogo público en caché, invalidado por etiqueta).
   cacheComponents: true,
   poweredByHeader: false,
+  experimental: {
+    // Subida de comprobantes por una acción de servidor: 4 MB de archivo más el multipart. Queda por
+    // debajo de los 4,5 MB que aceptan las funciones de Vercel. Es un límite global de las acciones.
+    serverActions: { bodySizeLimit: "4.4mb" },
+  },
   images: {
     remotePatterns: supabaseHost
       ? [

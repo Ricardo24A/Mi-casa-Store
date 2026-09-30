@@ -191,6 +191,8 @@ Estructura: header, hero simple, categorías (solo las que tienen productos), "M
 4. El dueño compara el comprobante con el estado de cuenta de su banco, y **aprueba o rechaza**. Al aprobar, pasa a `pagado` y se descuenta el stock definitivamente; al rechazar, el cliente puede volver a subir.
 5. Correos al cliente en cada cambio relevante.
 
+**Comprobantes:** cada pedido tiene como máximo **un comprobante activo** (en revisión o aprobado) y **3 en total** (el resto queda como historial: rechazado con su motivo, o reemplazado). Mientras esté en revisión el cliente puede reemplazarlo; uno aprobado no se cambia. El plazo `vence_en` no se reinicia con un reemplazo y un pedido vencido no admite ni subida ni reemplazo. Si el dueño rechaza un comprobante, el pedido vuelve a `pendiente_pago` (conserva la reserva) y el cliente sube uno nuevo. Subir o reemplazar es una sola función de base de datos con el pedido bloqueado, para que una aprobación en paralelo no se pise. Un archivo de otro pedido con el mismo hash se avisa al dueño, nunca al comprador.
+
 Riesgo principal: comprobantes falsos o editados. El dueño aprueba solo después de ver el dinero reflejado en su cuenta, nunca solo por la imagen. Mostrar esta advertencia en el dashboard.
 
 ## 9. Modelo de datos

@@ -14,7 +14,7 @@ export type OrderStatus =
   | "rechazado"
   | "cancelado"
   | "vencido";
-export type ProofStatus = "en_revision" | "aprobado" | "rechazado";
+export type ProofStatus = "en_revision" | "aprobado" | "rechazado" | "reemplazado";
 
 export interface Profile {
   id: string;

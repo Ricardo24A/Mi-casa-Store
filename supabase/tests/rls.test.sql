@@ -762,6 +762,322 @@ begin
 end $$;
 reset role;
 
+-- ---------------------------------------------------------------------------
+-- Reserva de stock: nunca negativa ni mayor que el stock
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  begin
+    update public.products set stock_reservado = -1 where id = '20000000-0000-0000-0000-000000000001';
+    raise exception 'la reserva no puede ser negativa';
+  exception when check_violation then null; end;
+
+  begin
+    update public.products set stock_reservado = stock + 1 where id = '20000000-0000-0000-0000-000000000001';
+    raise exception 'la reserva no puede superar el stock';
+  exception when check_violation then null; end;
+
+  -- Bajar el stock por debajo de lo reservado también se rechaza
+  update public.products set stock = 10, stock_reservado = 4 where id = '20000000-0000-0000-0000-000000000002';
+  begin
+    update public.products set stock = 3 where id = '20000000-0000-0000-0000-000000000002';
+    raise exception 'el stock no puede bajar de lo reservado';
+  exception when check_violation then null; end;
+  update public.products set stock = 5, stock_reservado = 0 where id = '20000000-0000-0000-0000-000000000002';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- create_order: cantidad debe ser > 0
+-- ---------------------------------------------------------------------------
+set local role service_role;
+do $$
+declare bad text;
+begin
+  foreach bad in array array[
+    '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10,"cantidad":0}]',
+    '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10,"cantidad":-1}]',
+    '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10,"cantidad":1.5}]',
+    '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10,"cantidad":"2"}]',
+    '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10,"cantidad":101}]',
+    '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10}]'
+  ] loop
+    begin
+      perform public.create_order('00000000-0000-0000-0000-0000000000c2', 'C2', 'c2@test.ec', '0999999992',
+        '{}'::jsonb, bad::jsonb, 10, 0, 0, 0, 10, 48);
+      raise exception 'create_order debía rechazar: %', bad;
+    exception when raise_exception then
+      assert sqlerrm = 'cantidad_invalida', 'motivo del rechazo (' || bad || '): ' || sqlerrm;
+    end;
+  end loop;
+end $$;
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- submit_payment_proof: comprobante atómico
+-- ---------------------------------------------------------------------------
+insert into public.orders
+  (id, user_id, contacto_nombre, contacto_email, contacto_telefono, subtotal, total, vence_en)
+values
+  ('30000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991', 10, 10, now() + interval '1 day'),
+  ('30000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-0000000000c2', 'C2', 'c2@test.ec', '0999999992', 10, 10, now() + interval '1 day'),
+  ('30000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991', 10, 10, now() - interval '1 hour');
+
+-- Ni anon ni un usuario autenticado la ejecutan
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}', true);
+do $$
+begin
+  begin
+    perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1',
+      '30000000-0000-0000-0000-0000000000a1', 'c1/x.png', repeat('e', 64));
+    raise exception 'un usuario autenticado no debe ejecutar submit_payment_proof';
+  exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon"}', true);
+do $$
+begin
+  begin
+    perform public.submit_payment_proof(null, '30000000-0000-0000-0000-0000000000a1', 'x', repeat('e', 64));
+    raise exception 'anon no debe ejecutar submit_payment_proof';
+  exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+
+set local role service_role;
+do $$
+declare r record;
+begin
+  -- Sin usuario
+  begin
+    perform public.submit_payment_proof(null, '30000000-0000-0000-0000-0000000000a1', 'x', repeat('e', 64));
+    raise exception 'sin usuario debe rechazarse';
+  exception when raise_exception then
+    assert sqlerrm = 'cuenta_requerida', 'sin usuario: ' || sqlerrm;
+  end;
+
+  -- El pedido de otro usuario se rechaza con el mismo error que uno inexistente
+  begin
+    perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1',
+      '30000000-0000-0000-0000-0000000000a2', 'c1/x.png', repeat('e', 64));
+    raise exception 'no debe adjuntar a un pedido ajeno';
+  exception when raise_exception then
+    assert sqlerrm = 'pedido_no_encontrado', 'pedido ajeno: ' || sqlerrm;
+  end;
+  begin
+    perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1',
+      '30000000-0000-0000-0000-00000000ffff', 'c1/x.png', repeat('e', 64));
+    raise exception 'un pedido inexistente debe rechazarse';
+  exception when raise_exception then
+    assert sqlerrm = 'pedido_no_encontrado', 'pedido inexistente: ' || sqlerrm;
+  end;
+
+  -- Un pedido vencido no admite comprobante
+  begin
+    perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1',
+      '30000000-0000-0000-0000-0000000000a3', 'c1/x.png', repeat('e', 64));
+    raise exception 'un pedido vencido debe rechazarse';
+  exception when raise_exception then
+    assert sqlerrm = 'pedido_vencido', 'pedido vencido: ' || sqlerrm;
+  end;
+  assert (select count(*) from public.payment_proofs where order_id = '30000000-0000-0000-0000-0000000000a3') = 0,
+    'un intento rechazado no deja comprobante';
+
+  -- Caso feliz
+  select * into r from public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1',
+    '30000000-0000-0000-0000-0000000000a1', 'c1/a1/uno.png', repeat('e', 64));
+  assert r.o_proof_id is not null, 'devuelve el id del comprobante';
+  assert r.o_duplicado = false, 'primer uso del archivo: no es duplicado';
+  assert (select estado from public.orders where id = '30000000-0000-0000-0000-0000000000a1') = 'comprobante_recibido',
+    'el pedido pasa a comprobante_recibido';
+  assert (select estado from public.payment_proofs where id = r.o_proof_id) = 'en_revision',
+    'el comprobante queda en revisión';
+
+  -- Un segundo archivo sobre un pedido con comprobante en revisión es un REEMPLAZO
+  select * into r from public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1',
+    '30000000-0000-0000-0000-0000000000a1', 'c1/a1/dos.png', repeat('f', 64));
+  assert r.o_reemplazo = true, 'subir otro archivo con uno en revisión es un reemplazo';
+  assert r.o_archivo_anterior = 'c1/a1/uno.png', 'devuelve el archivo reemplazado para borrarlo del bucket';
+  assert (select count(*) from public.payment_proofs where order_id = '30000000-0000-0000-0000-0000000000a1') = 2,
+    'el anterior queda como historial';
+  assert (select count(*) from public.payment_proofs
+          where order_id = '30000000-0000-0000-0000-0000000000a1' and estado in ('en_revision', 'aprobado')) = 1,
+    'un solo comprobante activo por pedido';
+
+  -- El mismo archivo (hash) en OTRO pedido se acepta pero se marca como duplicado
+  select * into r from public.submit_payment_proof('00000000-0000-0000-0000-0000000000c2',
+    '30000000-0000-0000-0000-0000000000a2', 'c2/a2/uno.png', repeat('f', 64));
+  assert r.o_duplicado = true, 'el mismo hash en otro pedido se marca como duplicado';
+end $$;
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- Reemplazo de comprobantes: un solo activo por pedido, historial, tope de 3 y carreras
+-- ---------------------------------------------------------------------------
+insert into public.orders
+  (id, user_id, contacto_nombre, contacto_email, contacto_telefono, subtotal, total, vence_en)
+values
+  ('30000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991', 10, 10, now() + interval '1 day'),
+  ('30000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991', 10, 10, now() + interval '1 day'),
+  ('30000000-0000-0000-0000-0000000000b3', '00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991', 10, 10, now() + interval '1 day'),
+  ('30000000-0000-0000-0000-0000000000b5', '00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991', 10, 10, now() + interval '1 day'),
+  ('30000000-0000-0000-0000-0000000000b6', '00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991', 10, 10, now() + interval '1 day');
+
+-- b4: comprobante en revisión, pero el plazo ya venció (el cron aún no lo marcó)
+insert into public.orders
+  (id, user_id, contacto_nombre, contacto_email, contacto_telefono, subtotal, total, vence_en)
+values ('30000000-0000-0000-0000-0000000000b4', '00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991', 10, 10, now() + interval '1 hour');
+insert into public.payment_proofs (order_id, archivo, hash) values
+  ('30000000-0000-0000-0000-0000000000b4', 'c1/b4/uno.png', repeat('1', 64));
+update public.orders set estado = 'comprobante_recibido', vence_en = now() - interval '1 minute'
+  where id = '30000000-0000-0000-0000-0000000000b4';
+
+set local role service_role;
+do $$
+declare
+  r record;
+  vence_antes timestamptz;
+  id_viejo uuid;
+  id_nuevo uuid;
+begin
+  -- ---- Reemplazo feliz -----------------------------------------------------
+  select vence_en into vence_antes from public.orders where id = '30000000-0000-0000-0000-0000000000b1';
+  perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b1', 'c1/b1/1.png', repeat('a', 63) || '1');
+  select * into r from public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b1', 'c1/b1/2.png', repeat('a', 63) || '2');
+  assert r.o_reemplazo and r.o_archivo_anterior = 'c1/b1/1.png', 'reemplazo feliz devuelve el archivo anterior';
+  assert (select estado from public.payment_proofs where archivo = 'c1/b1/1.png') = 'reemplazado', 'el anterior queda reemplazado';
+  assert (select estado from public.payment_proofs where archivo = 'c1/b1/2.png') = 'en_revision', 'el nuevo queda en revisión';
+  assert (select estado from public.orders where id = '30000000-0000-0000-0000-0000000000b1') = 'comprobante_recibido',
+    'el pedido sigue en comprobante_recibido';
+  assert (select vence_en from public.orders where id = '30000000-0000-0000-0000-0000000000b1') = vence_antes,
+    'el plazo no se reinicia';
+
+  -- El mismo archivo no cuenta como reemplazo
+  begin
+    perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b1', 'c1/b1/3.png', repeat('a', 63) || '2');
+    raise exception 'el mismo archivo no debe reemplazar';
+  exception when raise_exception then
+    assert sqlerrm = 'mismo_archivo', 'mismo archivo: ' || sqlerrm;
+  end;
+
+  -- ---- Tope de 3 comprobantes por pedido -----------------------------------
+  select * into r from public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b1', 'c1/b1/3.png', repeat('a', 63) || '3');
+  assert r.o_reemplazo, 'tercer comprobante permitido';
+  begin
+    perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b1', 'c1/b1/4.png', repeat('a', 63) || '4');
+    raise exception 'el cuarto comprobante debe rechazarse';
+  exception when raise_exception then
+    assert sqlerrm = 'limite_comprobantes', 'cuarto comprobante: ' || sqlerrm;
+  end;
+  assert (select count(*) from public.payment_proofs where order_id = '30000000-0000-0000-0000-0000000000b1') = 3, 'máximo 3 comprobantes';
+  assert (select count(*) from public.payment_proofs where order_id = '30000000-0000-0000-0000-0000000000b1' and estado in ('en_revision', 'aprobado')) = 1,
+    'y siempre uno solo activo';
+
+  -- ---- Aprobado: no se reemplaza -------------------------------------------
+  perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b2', 'c1/b2/1.png', repeat('b', 63) || '1');
+  reset role;
+  update public.payment_proofs set estado = 'aprobado' where archivo = 'c1/b2/1.png';
+  set local role service_role;
+  begin
+    perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b2', 'c1/b2/2.png', repeat('b', 63) || '2');
+    raise exception 'un comprobante aprobado no se reemplaza';
+  exception when raise_exception then
+    assert sqlerrm = 'comprobante_aprobado', 'aprobado: ' || sqlerrm;
+  end;
+  reset role;
+  update public.orders set estado = 'pagado' where id = '30000000-0000-0000-0000-0000000000b2';
+  set local role service_role;
+  begin
+    perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b2', 'c1/b2/3.png', repeat('b', 63) || '3');
+    raise exception 'un pedido pagado no admite comprobantes';
+  exception when raise_exception then
+    assert sqlerrm = 'estado_invalido', 'pedido pagado: ' || sqlerrm;
+  end;
+
+  -- ---- Pedido vencido: no admite reemplazo ---------------------------------
+  begin
+    perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b4', 'c1/b4/2.png', repeat('2', 64));
+    raise exception 'un pedido vencido no admite reemplazo';
+  exception when raise_exception then
+    assert sqlerrm = 'pedido_vencido', 'vencido: ' || sqlerrm;
+  end;
+  assert (select estado from public.payment_proofs where archivo = 'c1/b4/uno.png') = 'en_revision',
+    'un intento rechazado no toca el comprobante vigente';
+
+  -- ---- Pedido ajeno --------------------------------------------------------
+  begin
+    perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c2', '30000000-0000-0000-0000-0000000000b3', 'c2/b3/1.png', repeat('c', 64));
+    raise exception 'no debe adjuntar a un pedido ajeno';
+  exception when raise_exception then
+    assert sqlerrm = 'pedido_no_encontrado', 'ajeno: ' || sqlerrm;
+  end;
+  perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b3', 'c1/b3/1.png', repeat('c', 63) || '1');
+  begin
+    perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c2', '30000000-0000-0000-0000-0000000000b3', 'c2/b3/2.png', repeat('c', 64));
+    raise exception 'no debe reemplazar el comprobante de otro';
+  exception when raise_exception then
+    assert sqlerrm = 'pedido_no_encontrado', 'reemplazo ajeno: ' || sqlerrm;
+  end;
+  assert (select estado from public.payment_proofs where archivo = 'c1/b3/1.png') = 'en_revision', 'el ajeno no toca el comprobante';
+
+  -- ---- Rechazado (opción A): el pedido vuelve a pendiente_pago y sube uno nuevo ----
+  perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b5', 'c1/b5/1.png', repeat('d', 63) || '1');
+  reset role;
+  update public.payment_proofs set estado = 'rechazado', motivo = 'Monto incorrecto', revisado_en = now() where archivo = 'c1/b5/1.png';
+  update public.orders set estado = 'pendiente_pago' where id = '30000000-0000-0000-0000-0000000000b5';
+  set local role service_role;
+  select * into r from public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b5', 'c1/b5/2.png', repeat('d', 63) || '2');
+  assert r.o_reemplazo = false, 'tras un rechazo es una subida nueva, no un reemplazo';
+  assert (select estado from public.payment_proofs where archivo = 'c1/b5/1.png') = 'rechazado'
+     and (select motivo from public.payment_proofs where archivo = 'c1/b5/1.png') = 'Monto incorrecto',
+    'el rechazado queda como historial con su motivo';
+  assert (select estado from public.orders where id = '30000000-0000-0000-0000-0000000000b5') = 'comprobante_recibido', 'el pedido vuelve a comprobante_recibido';
+
+  -- ---- Carrera entre reemplazo y aprobación --------------------------------
+  -- Orden 1: el dueño aprueba primero -> el reemplazo ve el estado que dejó la aprobación y falla.
+  -- (b2 ya lo probó: aprobado -> 'comprobante_aprobado' y pagado -> 'estado_invalido'.)
+  -- Orden 2: el reemplazo va primero -> una aprobación "vieja" del comprobante ya reemplazado NO se aplica.
+  perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b6', 'c1/b6/viejo.png', repeat('e', 63) || '1');
+  select id into id_viejo from public.payment_proofs where archivo = 'c1/b6/viejo.png';
+  perform public.submit_payment_proof('00000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000b6', 'c1/b6/nuevo.png', repeat('e', 63) || '2');
+  select id into id_nuevo from public.payment_proofs where archivo = 'c1/b6/nuevo.png';
+  reset role;
+  begin
+    update public.payment_proofs set estado = 'aprobado' where id = id_viejo;
+    raise exception 'no se puede aprobar un comprobante ya reemplazado';
+  exception when raise_exception then
+    assert sqlerrm = 'transicion_invalida', 'aprobación vieja: ' || sqlerrm;
+  end;
+  update public.payment_proofs set estado = 'aprobado' where id = id_nuevo;
+  update public.orders set estado = 'pagado' where id = '30000000-0000-0000-0000-0000000000b6';
+  assert (select estado from public.orders where id = '30000000-0000-0000-0000-0000000000b6') = 'pagado', 'se aprueba el vigente';
+
+  -- ---- Reglas de la tabla --------------------------------------------------
+  begin
+    insert into public.payment_proofs (order_id, archivo, hash)
+    values ('30000000-0000-0000-0000-0000000000b3', 'c1/b3/otro.png', repeat('9', 64));
+    raise exception 'no debe haber dos comprobantes activos en un pedido';
+  exception when unique_violation then null; end;
+
+  begin
+    update public.payment_proofs set estado = 'reemplazado' where archivo = 'c1/b3/1.png';
+    raise exception 'reemplazado solo lo puede poner submit_payment_proof';
+  exception when raise_exception then
+    assert sqlerrm = 'transicion_invalida', 'reemplazado fuera de la función: ' || sqlerrm;
+  end;
+
+  begin
+    update public.payment_proofs set estado = 'en_revision' where id = id_nuevo;
+    raise exception 'un comprobante aprobado no vuelve a revisión';
+  exception when raise_exception then
+    assert sqlerrm = 'transicion_invalida', 'aprobado es final: ' || sqlerrm;
+  end;
+end $$;
+reset role;
+
 rollback;
 
 select 'RLS OK' as resultado;
