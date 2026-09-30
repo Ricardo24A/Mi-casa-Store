@@ -193,6 +193,21 @@ Estructura: header, hero simple, categorías (solo las que tienen productos), "M
 
 **Comprobantes:** cada pedido tiene como máximo **un comprobante activo** (en revisión o aprobado) y **3 en total** (el resto queda como historial: rechazado con su motivo, o reemplazado). Mientras esté en revisión el cliente puede reemplazarlo; uno aprobado no se cambia. El plazo `vence_en` no se reinicia con un reemplazo y un pedido vencido no admite ni subida ni reemplazo. Si el dueño rechaza un comprobante, el pedido vuelve a `pendiente_pago` (conserva la reserva) y el cliente sube uno nuevo. Subir o reemplazar es una sola función de base de datos con el pedido bloqueado, para que una aprobación en paralelo no se pise. Un archivo de otro pedido con el mismo hash se avisa al dueño, nunca al comprador.
 
+**Reserva de stock y estados** (todo en funciones de base de datos que bloquean el pedido primero y verifican el estado anterior; no hay UPDATE directo de `orders.estado` ni de `payment_proofs` por la API):
+
+| Cambio | Desde | Hacia | Stock |
+|---|---|---|---|
+| Crear pedido (`create_order`) | - | `pendiente_pago` | reserva |
+| Vencer (`expire_orders`, cron cada 5 min) | `pendiente_pago` con plazo vencido | `vencido` | libera la reserva |
+| Cancelar (`admin_cancel_order`) | `pendiente_pago`, `comprobante_recibido` | `cancelado` | libera la reserva |
+| Rechazar el pedido (`admin_reject_order`) | `comprobante_recibido` | `rechazado` | libera la reserva |
+| Rechazar el comprobante (`admin_reject_proof`) | `comprobante_recibido` | `pendiente_pago` con plazo **nuevo** | conserva la reserva |
+| Aprobar (`admin_approve_order`) | `comprobante_recibido` | `pagado` | descuenta el stock y consume la reserva |
+
+`orders.reserva_activa` indica si el pedido tiene unidades reservadas: se libera o consume una sola vez, así que aprobar o liberar dos veces el mismo pedido es imposible. Un pedido con comprobante en revisión no vence: lo resuelve el dueño.
+
+**Plazos acotados.** Cuando el dueño rechaza un comprobante, el pedido vuelve a `pendiente_pago` con un plazo nuevo de `horas_limite_pago` contado desde el rechazo (el reemplazo de un comprobante en revisión **no** reinicia el plazo). Como un pedido admite como máximo 3 comprobantes, ese plazo nuevo se concede a lo sumo 3 veces: sin contar el tiempo que el pedido espera la revisión del dueño, un pedido mantiene stock reservado como máximo 4 × `horas_limite_pago` desde que se crea (el plazo inicial más hasta 3 nuevos). El tiempo en `comprobante_recibido` depende del dueño, que debe aprobar, rechazar o cancelar.
+
 Riesgo principal: comprobantes falsos o editados. El dueño aprueba solo después de ver el dinero reflejado en su cuenta, nunca solo por la imagen. Mostrar esta advertencia en el dashboard.
 
 ## 9. Modelo de datos

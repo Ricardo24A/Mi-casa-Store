@@ -215,13 +215,15 @@ begin
   get diagnostics n = row_count;
   assert n = 0, 'el cliente no puede editar el perfil de otro';
 
-  update public.orders set estado = 'pagado' where id = '30000000-0000-0000-0000-000000000001';
-  get diagnostics n = row_count;
-  assert n = 0, 'el cliente no puede marcar su pedido como pagado';
+  begin
+    update public.orders set estado = 'pagado' where id = '30000000-0000-0000-0000-000000000001';
+    raise exception 'el cliente no puede marcar su pedido como pagado';
+  exception when insufficient_privilege then null; end;
 
-  update public.payment_proofs set estado = 'aprobado' where order_id = '30000000-0000-0000-0000-000000000001';
-  get diagnostics n = row_count;
-  assert n = 0, 'el cliente no puede aprobar su comprobante';
+  begin
+    update public.payment_proofs set estado = 'aprobado' where order_id = '30000000-0000-0000-0000-000000000001';
+    raise exception 'el cliente no puede aprobar su comprobante';
+  exception when insufficient_privilege then null; end;
 
   begin
     insert into public.orders (contacto_nombre, contacto_email, contacto_telefono, subtotal, total, vence_en)
@@ -285,16 +287,20 @@ begin
   get diagnostics n = row_count;
   assert n = 1, 'el admin edita productos';
 
-  update public.payment_proofs
-    set estado = 'rechazado', motivo = 'No coincide el monto',
-        revisado_por = '00000000-0000-0000-0000-0000000000a1', revisado_en = now()
-    where order_id = '30000000-0000-0000-0000-000000000001';
-  get diagnostics n = row_count;
-  assert n = 1, 'el admin revisa comprobantes';
+  -- Ni el admin cambia estados con un UPDATE directo: solo las funciones admin_* (que cuidan el stock)
+  begin
+    update public.payment_proofs set estado = 'rechazado', motivo = 'x' where order_id = '30000000-0000-0000-0000-000000000001';
+    raise exception 'el admin no revisa comprobantes con un UPDATE directo';
+  exception when insufficient_privilege then null; end;
 
-  update public.orders set estado = 'rechazado' where id = '30000000-0000-0000-0000-000000000001';
+  begin
+    update public.orders set estado = 'rechazado' where id = '30000000-0000-0000-0000-000000000001';
+    raise exception 'el admin no cambia el estado con un UPDATE directo';
+  exception when insufficient_privilege then null; end;
+
+  update public.orders set notas = 'nota interna' where id = '30000000-0000-0000-0000-000000000001';
   get diagnostics n = row_count;
-  assert n = 1, 'el admin cambia el estado del pedido';
+  assert n = 1, 'el admin sí puede anotar notas en el pedido';
 
   update public.store_settings set costo_envio = 4;
   get diagnostics n = row_count;
@@ -1077,6 +1083,374 @@ begin
   end;
 end $$;
 reset role;
+
+-- ---------------------------------------------------------------------------
+-- Vencimiento automático y cambios de estado con reserva de stock
+-- ---------------------------------------------------------------------------
+insert into public.products (id, category_id, nombre, slug, precio, stock)
+values ('20000000-0000-0000-0000-0000000000f9', '10000000-0000-0000-0000-000000000001', 'Flujo', 'p-flujo', 10, 100);
+
+-- Crea un pedido (con reserva) para un usuario, y opcionalmente con su comprobante en revisión.
+create function pg_temp.mk_order(p_user uuid, p_qty integer, p_with_proof boolean, p_tag text)
+returns uuid
+language plpgsql
+as $$
+declare v uuid;
+begin
+  set local role service_role;
+  select o_id into v from public.create_order(p_user, 'N', 'n@test.ec', '0999999999', '{}'::jsonb,
+    jsonb_build_array(jsonb_build_object('product_id', '20000000-0000-0000-0000-0000000000f9',
+                                         'nombre', 'Flujo', 'precio_unitario', 10, 'cantidad', p_qty)),
+    p_qty * 10, 0, 0, 0, p_qty * 10, 48);
+  if p_with_proof then
+    perform public.submit_payment_proof(p_user, v, 'flujo/' || p_tag || '.png', md5(p_tag) || md5(p_tag || 'x'));
+  end if;
+  reset role;
+  return v;
+end;
+$$;
+
+-- ---- Vencimiento ------------------------------------------------------------
+do $$
+declare
+  pid constant uuid := '20000000-0000-0000-0000-0000000000f9';
+  c1 constant uuid := '00000000-0000-0000-0000-0000000000c1';
+  ex1 uuid; ex2 uuid; ex3 uuid;
+  rs integer; n integer;
+begin
+  ex1 := pg_temp.mk_order(c1, 2, false, 'ex1');  -- pendiente y vencido
+  ex2 := pg_temp.mk_order(c1, 1, false, 'ex2');  -- pendiente y vigente
+  ex3 := pg_temp.mk_order(c1, 1, true,  'ex3');  -- con comprobante en revisión, plazo vencido
+  update public.orders set vence_en = now() - interval '1 minute' where id in (ex1, ex3);
+  select stock_reservado into rs from public.products where id = pid;
+  assert rs = 4, 'antes de vencer hay 4 unidades reservadas';
+
+  -- Solo el servidor (y el cron) la ejecuta
+  set local role authenticated;
+  perform set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}', true);
+  begin
+    perform public.expire_orders();
+    raise exception 'un usuario autenticado no debe ejecutar expire_orders';
+  exception when insufficient_privilege then null; end;
+  reset role;
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin
+    perform public.expire_orders();
+    raise exception 'anon no debe ejecutar expire_orders';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  set local role service_role;
+  begin
+    perform public.expire_orders(0);
+    raise exception 'el límite debe ser válido';
+  exception when raise_exception then
+    assert sqlerrm = 'limite_invalido', 'límite: ' || sqlerrm;
+  end;
+  n := public.expire_orders(1000);
+  assert n >= 1, 'venció al menos un pedido';
+  reset role;
+
+  assert (select estado from public.orders where id = ex1) = 'vencido', 'el pedido pendiente y vencido pasa a vencido';
+  assert (select motivo_estado from public.orders where id = ex1) = 'Venció el plazo de pago', 'con su motivo';
+  assert (select reserva_activa from public.orders where id = ex1) = false, 'sin reserva activa';
+  assert (select estado from public.orders where id = ex2) = 'pendiente_pago', 'el vigente no vence';
+  assert (select estado from public.orders where id = ex3) = 'comprobante_recibido', 'con comprobante en revisión no vence: lo resuelve el dueño';
+  select stock_reservado into rs from public.products where id = pid;
+  assert rs = 2, 'se liberaron las 2 unidades del pedido vencido';
+
+  -- Idempotente: repetirla no vence ni libera nada más
+  set local role service_role;
+  n := public.expire_orders(1000);
+  reset role;
+  assert n = 0, 'la segunda corrida no encuentra nada que vencer';
+  select stock_reservado into rs from public.products where id = pid;
+  assert rs = 2, 'y no libera dos veces';
+
+  -- Doble liberación directa: la reserva ya está liberada, no se vuelve a liberar ni a reactivar
+  perform public.order_release_reservation(ex1);
+  select stock_reservado into rs from public.products where id = pid;
+  assert rs = 2, 'liberar una reserva ya liberada no hace nada';
+  begin
+    update public.orders set reserva_activa = true where id = ex1;
+    raise exception 'una reserva liberada no se reactiva';
+  exception when raise_exception then
+    assert sqlerrm = 'reserva_ya_liberada', 'reactivar: ' || sqlerrm;
+  end;
+
+  -- Un pedido vencido no admite comprobante
+  set local role service_role;
+  begin
+    perform public.submit_payment_proof(c1, ex1, 'flujo/tarde.png', repeat('7', 64));
+    raise exception 'un pedido vencido no admite comprobante';
+  exception when raise_exception then
+    assert sqlerrm = 'estado_invalido', 'comprobante en vencido: ' || sqlerrm;
+  end;
+  reset role;
+end $$;
+
+-- ---- Cambios de estado ------------------------------------------------------
+do $$
+declare
+  pid constant uuid := '20000000-0000-0000-0000-0000000000f9';
+  c1 constant uuid := '00000000-0000-0000-0000-0000000000c1';
+  c2 constant uuid := '00000000-0000-0000-0000-0000000000c2';
+  admin_claims constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}';
+  aal1_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal1"}';
+  cust_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}';
+  oa uuid; ob uuid; oc uuid; od uuid; oe uuid; ofx uuid; og uuid; oh uuid; oi uuid; oj uuid;
+  pa uuid; pb1 uuid; pb2 uuid; pc uuid; pd uuid; pe uuid; pd2 uuid;
+  st integer; rs integer; st0 integer; rs0 integer;
+  horas integer; r text; i integer;
+begin
+  select horas_limite_pago into horas from public.store_settings;
+
+  -- ================= Aprobar =================
+  oa := pg_temp.mk_order(c1, 3, true, 'A');
+  select id into pa from public.payment_proofs where order_id = oa;
+  select stock, stock_reservado into st0, rs0 from public.products where id = pid;
+
+  -- Solo el administrador con 2FA
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  begin
+    perform public.admin_approve_order(oa, pa);
+    raise exception 'un cliente no aprueba';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'cliente: ' || sqlerrm; end;
+  perform set_config('request.jwt.claims', aal1_claims, true);
+  begin
+    perform public.admin_approve_order(oa, pa);
+    raise exception 'un admin sin 2FA no aprueba';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'admin aal1: ' || sqlerrm; end;
+  reset role;
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin
+    perform public.admin_approve_order(oa, pa);
+    raise exception 'anon no aprueba';
+  exception when insufficient_privilege then null; end;
+  reset role;
+  assert (select estado from public.orders where id = oa) = 'comprobante_recibido', 'los intentos no autorizados no cambian nada';
+
+  -- Aprobación
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  r := public.admin_approve_order(oa, pa);
+  reset role;
+  assert r = 'pagado', 'devuelve el nuevo estado';
+  assert (select estado from public.orders where id = oa) = 'pagado', 'el pedido queda pagado';
+  assert (select estado from public.payment_proofs where id = pa) = 'aprobado', 'el comprobante queda aprobado';
+  assert (select revisado_por from public.payment_proofs where id = pa) = '00000000-0000-0000-0000-0000000000a1', 'queda quién lo revisó';
+  assert (select reserva_activa from public.orders where id = oa) = false, 'la reserva se consumió';
+  select stock, stock_reservado into st, rs from public.products where id = pid;
+  assert st = st0 - 3 and rs = rs0 - 3, 'descuenta 3 del stock y libera 3 de la reserva';
+
+  -- Doble aprobación
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin
+    perform public.admin_approve_order(oa, pa);
+    raise exception 'no se puede aprobar dos veces';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'doble aprobación: ' || sqlerrm; end;
+  reset role;
+  select stock, stock_reservado into st, rs from public.products where id = pid;
+  assert st = st0 - 3 and rs = rs0 - 3, 'la segunda aprobación no descuenta otra vez';
+
+  -- Aprobar un comprobante que el cliente ya reemplazó
+  ob := pg_temp.mk_order(c1, 1, true, 'B1');
+  select id into pb1 from public.payment_proofs where order_id = ob;
+  set local role service_role;
+  perform public.submit_payment_proof(c1, ob, 'flujo/B2.png', md5('B2') || md5('B2x'));
+  reset role;
+  select id into pb2 from public.payment_proofs where order_id = ob and estado = 'en_revision';
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin
+    perform public.admin_approve_order(ob, pb1);
+    raise exception 'no se aprueba un comprobante reemplazado';
+  exception when raise_exception then assert sqlerrm = 'comprobante_no_vigente', 'comprobante viejo: ' || sqlerrm; end;
+  begin
+    perform public.admin_approve_order(ob, gen_random_uuid());
+    raise exception 'un comprobante inexistente no se aprueba';
+  exception when raise_exception then assert sqlerrm = 'comprobante_no_encontrado', 'inexistente: ' || sqlerrm; end;
+  perform public.admin_approve_order(ob, pb2);
+  reset role;
+  assert (select estado from public.orders where id = ob) = 'pagado', 'se aprueba el vigente';
+
+  -- Un pedido pendiente (sin comprobante) no se aprueba
+  oc := pg_temp.mk_order(c1, 1, false, 'C');
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin
+    perform public.admin_approve_order(oc, gen_random_uuid());
+    raise exception 'sin comprobante no se aprueba';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'sin comprobante: ' || sqlerrm; end;
+  reset role;
+
+  -- ================= Rechazar el comprobante (opción A) =================
+  od := pg_temp.mk_order(c1, 2, true, 'D1');
+  select id into pd from public.payment_proofs where order_id = od;
+  select stock_reservado into rs0 from public.products where id = pid;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin
+    perform public.admin_reject_proof(od, pd, '  ');
+    raise exception 'el motivo es obligatorio';
+  exception when raise_exception then assert sqlerrm = 'motivo_invalido', 'sin motivo: ' || sqlerrm; end;
+  begin
+    perform public.admin_reject_proof(od, pd, 'ab');
+    raise exception 'el motivo debe tener sentido';
+  exception when raise_exception then assert sqlerrm = 'motivo_invalido', 'motivo corto: ' || sqlerrm; end;
+  r := public.admin_reject_proof(od, pd, 'El monto no coincide');
+  reset role;
+  assert r = 'pendiente_pago', 'el pedido vuelve a pendiente de pago';
+  assert (select estado from public.orders where id = od) = 'pendiente_pago', 'estado del pedido';
+  assert (select estado from public.payment_proofs where id = pd) = 'rechazado'
+     and (select motivo from public.payment_proofs where id = pd) = 'El monto no coincide', 'comprobante rechazado con motivo';
+  assert (select reserva_activa from public.orders where id = od), 'la reserva se conserva';
+  select stock_reservado into rs from public.products where id = pid;
+  assert rs = rs0, 'y el stock reservado no cambia';
+  assert (select vence_en from public.orders where id = od) >= now() + make_interval(hours => horas) - interval '1 minute',
+    'plazo NUEVO de horas_limite_pago contado desde el rechazo';
+
+  -- Doble rechazo del mismo comprobante
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin
+    perform public.admin_reject_proof(od, pd, 'Otra vez');
+    raise exception 'no se rechaza dos veces';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'doble rechazo: ' || sqlerrm; end;
+  reset role;
+
+  -- El cliente sube uno nuevo y el viejo ya no se puede tocar
+  set local role service_role;
+  perform public.submit_payment_proof(c1, od, 'flujo/D2.png', md5('D2') || md5('D2x'));
+  reset role;
+  select id into pd2 from public.payment_proofs where order_id = od and estado = 'en_revision';
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin
+    perform public.admin_reject_proof(od, pd, 'Sobre el viejo');
+    raise exception 'el comprobante viejo no es vigente';
+  exception when raise_exception then assert sqlerrm = 'comprobante_no_vigente', 'viejo: ' || sqlerrm; end;
+  perform public.admin_reject_proof(od, pd2, 'Sigue sin coincidir');
+  reset role;
+
+  -- Acotado: como mucho 3 comprobantes por pedido, así que el plazo nuevo solo se da 3 veces
+  set local role service_role;
+  perform public.submit_payment_proof(c1, od, 'flujo/D3.png', md5('D3') || md5('D3x'));
+  reset role;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  perform public.admin_reject_proof(od, (select id from public.payment_proofs where order_id = od and estado = 'en_revision'), 'Tercer rechazo');
+  reset role;
+  assert (select count(*) from public.payment_proofs where order_id = od) = 3, 'tres comprobantes en el historial';
+  set local role service_role;
+  begin
+    perform public.submit_payment_proof(c1, od, 'flujo/D4.png', md5('D4') || md5('D4x'));
+    raise exception 'el cuarto comprobante debe rechazarse';
+  exception when raise_exception then assert sqlerrm = 'limite_comprobantes', 'cuarto: ' || sqlerrm; end;
+  reset role;
+  assert (select reserva_activa from public.orders where id = od), 'la reserva sigue hasta que venza o se cancele';
+
+  -- ================= Rechazar el pedido definitivamente =================
+  oe := pg_temp.mk_order(c2, 2, true, 'E');
+  select id into pe from public.payment_proofs where order_id = oe;
+  select stock_reservado into rs0 from public.products where id = pid;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  r := public.admin_reject_order(oe, 'Transferencia no recibida');
+  reset role;
+  assert r = 'rechazado' and (select estado from public.orders where id = oe) = 'rechazado', 'pedido rechazado';
+  assert (select motivo_estado from public.orders where id = oe) = 'Transferencia no recibida', 'con su motivo';
+  assert (select estado from public.payment_proofs where id = pe) = 'rechazado', 'su comprobante también';
+  select stock_reservado into rs from public.products where id = pid;
+  assert rs = rs0 - 2, 'libera la reserva';
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin
+    perform public.admin_reject_order(oe, 'Otra vez');
+    raise exception 'no se rechaza dos veces';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'doble rechazo del pedido: ' || sqlerrm; end;
+  reset role;
+  select stock_reservado into rs from public.products where id = pid;
+  assert rs = rs0 - 2, 'no libera dos veces';
+
+  -- ================= Cancelar =================
+  ofx := pg_temp.mk_order(c1, 4, false, 'F');   -- pendiente de pago
+  og  := pg_temp.mk_order(c1, 1, true,  'G');   -- con comprobante en revisión
+  select stock_reservado into rs0 from public.products where id = pid;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  r := public.admin_cancel_order(ofx, 'El cliente lo pidió');
+  reset role;
+  assert r = 'cancelado' and (select estado from public.orders where id = ofx) = 'cancelado', 'pedido cancelado';
+  select stock_reservado into rs from public.products where id = pid;
+  assert rs = rs0 - 4, 'cancelar libera la reserva';
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin
+    perform public.admin_cancel_order(ofx, 'Otra vez');
+    raise exception 'no se cancela dos veces';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'doble cancelación: ' || sqlerrm; end;
+  begin
+    perform public.admin_cancel_order(oa, 'Ya estaba pagado');
+    raise exception 'un pedido pagado no se cancela';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'cancelar pagado: ' || sqlerrm; end;
+  r := public.admin_cancel_order(og, 'Sin stock real');
+  reset role;
+  select stock_reservado into rs from public.products where id = pid;
+  assert rs = rs0 - 5, 'cancelar el que tenía comprobante también libera (y una sola vez)';
+  assert (select estado from public.payment_proofs where order_id = og) = 'rechazado', 'su comprobante en revisión se cierra';
+  select stock into st from public.products where id = pid;
+  assert st = st0 - 3 - 1, 'cancelar y rechazar no tocan el stock definitivo (solo las aprobaciones descuentan)';
+
+  -- ================= Cruces entre vencer y cancelar =================
+  oh := pg_temp.mk_order(c1, 1, false, 'H');
+  oi := pg_temp.mk_order(c1, 1, false, 'I');
+  update public.orders set vence_en = now() - interval '1 minute' where id in (oh, oi);
+  select stock_reservado into rs0 from public.products where id = pid;
+  -- H: primero el dueño cancela; luego corre el vencimiento
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  perform public.admin_cancel_order(oh, 'Cancelado antes de vencer');
+  reset role;
+  set local role service_role;
+  perform public.expire_orders(1000);
+  reset role;
+  assert (select estado from public.orders where id = oh) = 'cancelado', 'vencer no pisa un pedido ya cancelado';
+  -- I: venció por el cron; luego el dueño intenta cancelar
+  assert (select estado from public.orders where id = oi) = 'vencido', 'I venció';
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin
+    perform public.admin_cancel_order(oi, 'Tarde');
+    raise exception 'un pedido vencido no se cancela';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'cancelar vencido: ' || sqlerrm; end;
+  reset role;
+  select stock_reservado into rs from public.products where id = pid;
+  assert rs = rs0 - 2, 'cada pedido liberó su unidad exactamente una vez';
+
+  -- ================= Sin UPDATE directo por la API =================
+  oj := pg_temp.mk_order(c1, 1, true, 'J');
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin
+    update public.orders set estado = 'pagado' where id = oj;
+    raise exception 'ni el admin cambia el estado con UPDATE';
+  exception when insufficient_privilege then null; end;
+  begin
+    update public.payment_proofs set estado = 'aprobado' where order_id = oj;
+    raise exception 'ni el admin aprueba un comprobante con UPDATE';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  -- Invariantes del stock
+  assert (select count(*) from public.products where stock_reservado < 0 or stock_reservado > stock) = 0,
+    'la reserva nunca es negativa ni supera el stock';
+end $$;
 
 rollback;
 

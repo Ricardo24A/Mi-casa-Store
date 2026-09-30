@@ -18,6 +18,7 @@ interface OrderRow {
   estado: OrderStatus;
   total: number;
   vence_en: string;
+  motivo_estado: string | null;
   created_at: string;
   payment_proofs: { estado: ProofStatus; motivo: string | null; created_at: string }[];
 }
@@ -31,7 +32,7 @@ export default async function OrdersPage() {
   const supabase = await createClient();
   const { data } = await supabase
     .from("orders")
-    .select("id, referencia, estado, total, vence_en, created_at, payment_proofs(estado, motivo, created_at)")
+    .select("id, referencia, estado, total, vence_en, motivo_estado, created_at, payment_proofs(estado, motivo, created_at)")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(50)
@@ -74,6 +75,11 @@ export default async function OrdersPage() {
               </span>
               <p className="text-lg font-semibold text-ink">{formatUsd(order.total)}</p>
             </div>
+            {order.motivo_estado && (order.estado === "rechazado" || order.estado === "cancelado" || order.estado === "vencido") && (
+              <p className="mt-3 text-sm text-ink-soft">
+                Motivo: <span className="text-ink">{order.motivo_estado}</span>
+              </p>
+            )}
             <div className="mt-3">
               <ProofSection
                 referencia={order.referencia}

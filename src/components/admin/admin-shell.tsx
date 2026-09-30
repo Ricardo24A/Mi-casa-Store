@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { LayoutDashboard, LogOut, Menu, X, type LucideIcon } from "lucide-react";
+import { ClipboardList, LayoutDashboard, LogOut, Menu, X, type LucideIcon } from "lucide-react";
 import { cerrarSesion } from "@/app/(admin)/admin/actions";
 import { clearCartOnSignOut } from "@/lib/cart-store";
 import { cn } from "@/lib/utils";
@@ -14,21 +14,28 @@ interface NavItem {
   icon: LucideIcon;
   /** Solo activo con la ruta exacta (Resumen no debe quedar activo en las demás). */
   exact?: boolean;
+  /** Contador que se muestra junto al nombre (p. ej. pedidos por revisar). */
+  badge?: "pedidos";
 }
 
 /**
  * Solo hay enlaces a pantallas que existen. Cada sección (Productos, Categorías, Descuentos,
- * Configuración, Pedidos) se agrega aquí junto con su página.
+ * Configuración) se agrega aquí junto con su página.
  */
-const NAV_ITEMS: NavItem[] = [{ href: "/admin", label: "Resumen", icon: LayoutDashboard, exact: true }];
+const NAV_ITEMS: NavItem[] = [
+  { href: "/admin", label: "Resumen", icon: LayoutDashboard, exact: true },
+  { href: "/admin/pedidos", label: "Pedidos", icon: ClipboardList, badge: "pedidos" },
+];
 
 function SidebarContent({
   fullName,
+  pendingOrders,
   onNavigate,
   closeRef,
   onClose,
 }: {
   fullName: string | null;
+  pendingOrders: number;
   onNavigate?: () => void;
   closeRef?: React.Ref<HTMLButtonElement>;
   onClose?: () => void;
@@ -71,6 +78,12 @@ function SidebarContent({
                 >
                   <item.icon className="size-5" strokeWidth={1.75} aria-hidden />
                   {item.label}
+                  {item.badge === "pedidos" && pendingOrders > 0 && (
+                    <span className="ml-auto inline-flex min-w-6 items-center justify-center rounded-full bg-bg px-2 text-xs font-semibold leading-6 text-accent-hover">
+                      <span aria-hidden>{pendingOrders > 99 ? "99+" : pendingOrders}</span>
+                      <span className="sr-only">{pendingOrders} por revisar</span>
+                    </span>
+                  )}
                 </Link>
               </li>
             );
@@ -95,7 +108,15 @@ function SidebarContent({
 }
 
 /** Marco del panel: menú lateral fijo en escritorio y cajón en móvil. */
-export function AdminShell({ fullName, children }: { fullName: string | null; children: ReactNode }) {
+export function AdminShell({
+  fullName,
+  pendingOrders = 0,
+  children,
+}: {
+  fullName: string | null;
+  pendingOrders?: number;
+  children: ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -117,7 +138,7 @@ export function AdminShell({ fullName, children }: { fullName: string | null; ch
   return (
     <div className="min-h-dvh lg:pl-64">
       <aside className="on-dark fixed inset-y-0 left-0 hidden w-64 flex-col bg-accent-hover text-bg lg:flex">
-        <SidebarContent fullName={fullName} />
+        <SidebarContent fullName={fullName} pendingOrders={pendingOrders} />
       </aside>
 
       <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-line bg-bg px-4 py-2 lg:hidden">
@@ -139,6 +160,7 @@ export function AdminShell({ fullName, children }: { fullName: string | null; ch
           <aside className="on-dark absolute inset-y-0 left-0 flex w-[85%] max-w-72 flex-col bg-accent-hover text-bg">
             <SidebarContent
               fullName={fullName}
+              pendingOrders={pendingOrders}
               closeRef={closeRef}
               onClose={() => setOpen(false)}
               onNavigate={() => setOpen(false)}

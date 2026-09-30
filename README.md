@@ -41,7 +41,9 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 8. `migrations/20260929000008_cart_items.sql`: carrito de la cuenta (`cart_items`, con RLS por dueño) y `create_order` actualizada para vaciarlo al crear el pedido.
 9. `migrations/20260929000009_payment_proof_base.sql`: restricciones de stock verificadas, `create_order` valida cantidades, bucket de comprobantes a 4 MB y `submit_payment_proof`.
 10. `migrations/20260929000010_replace_payment_proof.sql`: estado `reemplazado`, un solo comprobante activo por pedido (historial, máximo 3), transiciones válidas del comprobante y `submit_payment_proof` con reemplazo.
-11. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
+11. `migrations/20260929000011_order_expiry.sql`: `reserva_activa`, liberar y consumir la reserva, `expire_orders()` y el cron `expire-orders` (pg_cron, cada 5 minutos).
+12. `migrations/20260929000012_order_transitions.sql`: `admin_approve_order`, `admin_reject_proof`, `admin_reject_order` y `admin_cancel_order` (una función por cambio de estado). Quita el UPDATE directo de `orders.estado` y de `payment_proofs`.
+13. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.
 
@@ -53,6 +55,10 @@ Todo usuario nuevo es `customer`; el rol admin no se puede asignar desde la API.
 update public.profiles set role = 'admin'
 where id = (select id from auth.users where email = 'correo-del-dueno@ejemplo.com');
 ```
+
+### Vencimiento automático (cron)
+
+La migración 11 programa `select public.expire_orders()` cada 5 minutos con **pg_cron**. Si la extensión no se puede activar desde la migración, actívala en Supabase → Database → Extensions → `pg_cron` y ejecuta otra vez el último bloque de esa migración. Para comprobar que corre: `select * from cron.job;` y `select * from cron.job_run_details order by start_time desc limit 5;`. La función es idempotente: repetirla no vence ni libera nada dos veces.
 
 ### 2FA del administrador
 
