@@ -46,7 +46,8 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 13. `migrations/20260929000013_categories_admin.sql`: `categories.activa`, `category_visible()`, la vista `visible_categories` y la política de `products` respetan las categorías desactivadas, dos niveles, nombres únicos por padre y `admin_move_category`.
 14. `migrations/20260929000014_create_order_category_active.sql`: `create_order` rechaza productos de una categoría desactivada (aunque el servidor lea con `service_role`).
 15. `migrations/20260929000015_product_images_limit.sql`: el bucket `product-images` admite hasta 4 MB.
-16. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
+16. `migrations/20260929000016_discounts_guards.sql`: porcentaje menor que 100, el destino de un descuento debe existir (producto o categoría) y se borra el descuento cuando se borra su destino.
+17. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.
 

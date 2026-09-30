@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ClipboardList, FolderTree, LayoutDashboard, LogOut, Menu, Package, X, type LucideIcon } from "lucide-react";
+import { BadgePercent, ClipboardList, FolderTree, LayoutDashboard, LogOut, Menu, Package, X, type LucideIcon } from "lucide-react";
 import { cerrarSesion } from "@/app/(admin)/admin/actions";
 import { clearCartOnSignOut } from "@/lib/cart-store";
 import { cn } from "@/lib/utils";
@@ -19,13 +19,14 @@ interface NavItem {
 }
 
 /**
- * Solo hay enlaces a pantallas que existen. Cada sección (Descuentos, Configuración) se agrega
- * aquí junto con su página.
+ * Solo hay enlaces a pantallas que existen. Cada sección (Configuración) se agrega aquí junto con
+ * su página.
  */
 const NAV_ITEMS: NavItem[] = [
   { href: "/admin", label: "Resumen", icon: LayoutDashboard, exact: true },
   { href: "/admin/productos", label: "Productos", icon: Package },
   { href: "/admin/categorias", label: "Categorías", icon: FolderTree },
+  { href: "/admin/descuentos", label: "Descuentos", icon: BadgePercent },
   { href: "/admin/pedidos", label: "Pedidos", icon: ClipboardList, badge: "pedidos" },
 ];
 

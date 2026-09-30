@@ -34,9 +34,15 @@ test("monto fijo", () => {
   assert.equal(r.precioFinal, 15);
 });
 
-test("el monto fijo nunca deja el precio bajo cero", () => {
-  const r = priceProduct(product, [{ ...base, tipo: "monto_fijo", valor: 999 }], ctx);
-  assert.equal(r.precioFinal, 0);
+test("un descuento nunca deja un producto gratis: queda al menos 1 centavo", () => {
+  const fixed = priceProduct(product, [{ ...base, tipo: "monto_fijo", valor: 999 }], ctx);
+  assert.equal(fixed.precioFinal, 0.01);
+  assert.equal(fixed.descuento, 19.99);
+  const full = priceProduct(product, [{ ...base, tipo: "porcentaje", valor: 100 }], ctx);
+  assert.equal(full.precioFinal, 0.01, "ni siquiera un 100% (que la base de datos ya no permite)");
+  const cheap = priceProduct({ ...product, precio: 0.01 }, [{ ...base, tipo: "monto_fijo", valor: 5 }], ctx);
+  assert.equal(cheap.precioFinal, 0.01, "un producto de 1 centavo no admite rebaja");
+  assert.equal(cheap.descuento, 0);
 });
 
 test("redondeo a centavos sin errores de coma flotante", () => {

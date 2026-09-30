@@ -73,10 +73,14 @@ function appliesTo(d: PricingDiscount, p: PricingProduct, ctx: PricingContext): 
   }
 }
 
-/** Rebaja en centavos que produce `d` sobre un precio de lista en centavos. */
+/**
+ * Rebaja en centavos que produce `d` sobre un precio de lista en centavos.
+ * Ningún descuento deja un producto gratis: siempre queda al menos 1 centavo (un descuento mal
+ * configurado, por ejemplo un monto fijo de $5 en toda la tienda, no puede regalar los productos baratos).
+ */
 function discountCents(d: PricingDiscount, listCents: number): number {
   const raw = d.tipo === "porcentaje" ? Math.round((listCents * d.valor) / 100) : toCents(d.valor);
-  return Math.min(Math.max(raw, 0), listCents);
+  return Math.min(Math.max(raw, 0), Math.max(listCents - 1, 0));
 }
 
 export function priceProduct(

@@ -1683,6 +1683,149 @@ begin
     'product-images solo admite JPG, PNG y WebP';
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- Descuentos: datos válidos, destino existente, limpieza y permisos
+-- ---------------------------------------------------------------------------
+insert into public.categories (id, nombre, slug) values ('60000000-0000-0000-0000-000000000001', 'Desc cat', 'desc-cat');
+insert into public.products (id, category_id, nombre, slug, precio, stock)
+values ('60000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000001', 'Desc prod', 'desc-prod', 10, 5);
+
+do $$
+declare
+  admin_claims constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}';
+  aal1_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal1"}';
+  cust_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}';
+  dcat constant uuid := '60000000-0000-0000-0000-000000000001';
+  dprod constant uuid := '60000000-0000-0000-0000-000000000002';
+  n integer;
+  base_pub integer;
+begin
+  -- ---- Datos válidos (superusuario) ----------------------------------------------
+  begin
+    insert into public.discounts (nombre, tipo, valor, alcance) values ('Cien', 'porcentaje', 100, 'tienda');
+    raise exception 'un 100%% debe rechazarse';
+  exception when check_violation then null; end;
+  insert into public.discounts (nombre, tipo, valor, alcance) values ('Casi todo', 'porcentaje', 99.99, 'tienda');
+  begin
+    insert into public.discounts (nombre, tipo, valor, alcance) values ('Cero', 'monto_fijo', 0, 'tienda');
+    raise exception 'el valor debe ser mayor que 0';
+  exception when check_violation then null; end;
+  begin
+    insert into public.discounts (nombre, tipo, valor, alcance, inicia, termina)
+    values ('Fechas mal', 'monto_fijo', 1, 'tienda', now(), now() - interval '1 day');
+    raise exception 'termina debe ser posterior a inicia';
+  exception when check_violation then null; end;
+  begin
+    insert into public.discounts (nombre, tipo, valor, alcance, target_id) values ('Tienda con destino', 'monto_fijo', 1, 'tienda', dprod);
+    raise exception 'toda la tienda no lleva destino';
+  exception when check_violation then null; end;
+  begin
+    insert into public.discounts (nombre, tipo, valor, alcance) values ('Producto sin destino', 'monto_fijo', 1, 'producto');
+    raise exception 'un descuento por producto necesita destino';
+  exception when check_violation then null; end;
+
+  -- ---- El destino debe existir ----------------------------------------------------
+  begin
+    insert into public.discounts (nombre, tipo, valor, alcance, target_id) values ('Fantasma', 'monto_fijo', 1, 'producto', gen_random_uuid());
+    raise exception 'un producto inexistente debe rechazarse';
+  exception when check_violation then
+    null;
+  end;
+  begin
+    insert into public.discounts (nombre, tipo, valor, alcance, target_id) values ('Fantasma cat', 'porcentaje', 5, 'categoria', gen_random_uuid());
+    raise exception 'una categoría inexistente debe rechazarse';
+  exception when check_violation then null; end;
+  begin
+    -- El id de una categoría no vale como destino de un producto, y al revés
+    insert into public.discounts (nombre, tipo, valor, alcance, target_id) values ('Mezcla', 'monto_fijo', 1, 'producto', dcat);
+    raise exception 'el destino debe ser del tipo del alcance (producto)';
+  exception when check_violation then null; end;
+  begin
+    insert into public.discounts (nombre, tipo, valor, alcance, target_id) values ('Mezcla 2', 'monto_fijo', 1, 'categoria', dprod);
+    raise exception 'el destino debe ser del tipo del alcance (categoría)';
+  exception when check_violation then null; end;
+  insert into public.discounts (id, nombre, tipo, valor, alcance, target_id) values
+    ('61000000-0000-0000-0000-000000000001', 'Por producto', 'porcentaje', 15, 'producto', dprod),
+    ('61000000-0000-0000-0000-000000000002', 'Por categoría', 'monto_fijo', 2, 'categoria', dcat);
+  begin
+    update public.discounts set target_id = gen_random_uuid() where id = '61000000-0000-0000-0000-000000000001';
+    raise exception 'editar un descuento tampoco admite un destino inexistente';
+  exception when check_violation then null; end;
+
+  -- ---- Al borrar el producto o la categoría, sus descuentos desaparecen ----------------
+  delete from public.products where id = dprod;
+  assert (select count(*) from public.discounts where id = '61000000-0000-0000-0000-000000000001') = 0,
+    'al borrar el producto se borra su descuento';
+  assert (select count(*) from public.discounts where id = '61000000-0000-0000-0000-000000000002') = 1,
+    'el de la categoría sigue';
+  delete from public.categories where id = dcat;
+  assert (select count(*) from public.discounts where id = '61000000-0000-0000-0000-000000000002') = 0,
+    'al borrar la categoría se borra su descuento';
+  assert (select count(*) from public.discounts where nombre = 'Casi todo') = 1, 'los de toda la tienda no se tocan';
+  delete from public.discounts where nombre = 'Casi todo';
+
+  -- ---- Lectura pública: solo automáticos, activos y vigentes -----------------------------
+  insert into public.discounts (nombre, tipo, valor, alcance, codigo, inicia, termina, activo) values
+    ('P vigente',  'porcentaje', 5, 'tienda', null,       now() - interval '1 day', now() + interval '1 day', true),
+    ('P cupón',    'porcentaje', 5, 'tienda', 'CUPON55',  now() - interval '1 day', now() + interval '1 day', true),
+    ('P apagado',  'porcentaje', 5, 'tienda', null,       now() - interval '1 day', now() + interval '1 day', false),
+    ('P futuro',   'porcentaje', 5, 'tienda', null,       now() + interval '1 day', now() + interval '2 day', true),
+    ('P vencido',  'porcentaje', 5, 'tienda', null,       now() - interval '3 day', now() - interval '2 day', true);
+
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  assert (select count(*) from public.discounts where nombre like 'P %') = 1, 'el público solo ve el automático, activo y vigente';
+  reset role;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  assert (select count(*) from public.discounts where nombre like 'P %') = 1, 'un cliente tampoco ve el resto';
+  perform set_config('request.jwt.claims', admin_claims, true);
+  assert (select count(*) from public.discounts where nombre like 'P %') = 5, 'el administrador con 2FA ve todos';
+  perform set_config('request.jwt.claims', aal1_claims, true);
+  assert (select count(*) from public.discounts where nombre like 'P %') = 1, 'un administrador sin 2FA ve lo mismo que el público';
+  reset role;
+
+  -- ---- Escritura: solo el administrador con 2FA ---------------------------------------------
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin
+    insert into public.discounts (nombre, tipo, valor, alcance) values ('anon', 'porcentaje', 5, 'tienda');
+    raise exception 'anon no crea descuentos';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  for i in 1..2 loop
+    set local role authenticated;
+    perform set_config('request.jwt.claims', case i when 1 then cust_claims else aal1_claims end, true);
+    begin
+      insert into public.discounts (nombre, tipo, valor, alcance) values ('intruso', 'porcentaje', 5, 'tienda');
+      raise exception 'sin ser administrador con 2FA no se crean descuentos';
+    exception when insufficient_privilege then null; end;
+    update public.discounts set valor = 50 where nombre = 'P vigente';
+    get diagnostics n = row_count;
+    assert n = 0, 'sin ser administrador con 2FA no se editan descuentos';
+    delete from public.discounts where nombre like 'P %';
+    get diagnostics n = row_count;
+    assert n = 0, 'sin ser administrador con 2FA no se borran descuentos';
+    reset role;
+  end loop;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  insert into public.discounts (nombre, tipo, valor, alcance) values ('P admin', 'monto_fijo', 1, 'tienda');
+  update public.discounts set valor = 2 where nombre = 'P admin';
+  get diagnostics n = row_count;
+  assert n = 1, 'el administrador con 2FA edita';
+  begin
+    update public.discounts set valor = 100, tipo = 'porcentaje' where nombre = 'P admin';
+    raise exception 'ni el administrador puede guardar un 100%%';
+  exception when check_violation then null; end;
+  delete from public.discounts where nombre like 'P %';
+  get diagnostics n = row_count;
+  assert n = 6, 'y borra';
+  reset role;
+end $$;
+
 rollback;
 
 select 'RLS OK' as resultado;
