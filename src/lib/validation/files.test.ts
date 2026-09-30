@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { PROOF_MAX_BYTES, checkProofBytes, sniffMime } from "./files.ts";
+import { PRODUCT_IMAGE_MAX_BYTES, PROOF_MAX_BYTES, checkImageBytes, checkProofBytes, sniffMime } from "./files.ts";
 
 const bytes = (...b: number[]) => Uint8Array.from(b);
 const pad = (head: number[], total: number) => {
@@ -41,4 +41,25 @@ test("rechaza archivos vacíos y demasiado grandes", () => {
 
 test("el límite de comprobantes es 4 MB", () => {
   assert.equal(PROOF_MAX_BYTES, 4 * 1024 * 1024);
+});
+
+test("imágenes de productos: acepta JPG, PNG y WebP por su contenido real", () => {
+  assert.deepEqual(checkImageBytes(pad(JPEG, 100)), { ok: true, mime: "image/jpeg", extension: "jpg" });
+  assert.deepEqual(checkImageBytes(pad(PNG, 100)), { ok: true, mime: "image/png", extension: "png" });
+  assert.deepEqual(checkImageBytes(pad(WEBP, 100)), { ok: true, mime: "image/webp", extension: "webp" });
+});
+
+test("imágenes de productos: rechaza PDF, GIF, SVG, HTML y ejecutables", () => {
+  assert.equal(checkImageBytes(pad(PDF, 100)).ok, false);
+  assert.equal(checkImageBytes(pad([0x47, 0x49, 0x46, 0x38, 0x39, 0x61], 100)).ok, false);
+  assert.equal(checkImageBytes(new TextEncoder().encode("<svg xmlns='http://www.w3.org/2000/svg'><script>1</script></svg>")).ok, false);
+  assert.equal(checkImageBytes(new TextEncoder().encode("<html></html>")).ok, false);
+  assert.equal(checkImageBytes(bytes(0x4d, 0x5a, 0x90, 0x00)).ok, false);
+});
+
+test("imágenes de productos: vacío y más de 4 MB se rechazan; el límite exacto pasa", () => {
+  assert.equal(PRODUCT_IMAGE_MAX_BYTES, 4 * 1024 * 1024);
+  assert.equal(checkImageBytes(new Uint8Array(0)).ok, false);
+  assert.equal(checkImageBytes(pad(JPEG, PRODUCT_IMAGE_MAX_BYTES)).ok, true);
+  assert.equal(checkImageBytes(pad(JPEG, PRODUCT_IMAGE_MAX_BYTES + 1)).ok, false);
 });

@@ -44,7 +44,9 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 11. `migrations/20260929000011_order_expiry.sql`: `reserva_activa`, liberar y consumir la reserva, `expire_orders()` y el cron `expire-orders` (pg_cron, cada 5 minutos).
 12. `migrations/20260929000012_order_transitions.sql`: `admin_approve_order`, `admin_reject_proof`, `admin_reject_order` y `admin_cancel_order` (una función por cambio de estado). Quita el UPDATE directo de `orders.estado` y de `payment_proofs`.
 13. `migrations/20260929000013_categories_admin.sql`: `categories.activa`, `category_visible()`, la vista `visible_categories` y la política de `products` respetan las categorías desactivadas, dos niveles, nombres únicos por padre y `admin_move_category`.
-14. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
+14. `migrations/20260929000014_create_order_category_active.sql`: `create_order` rechaza productos de una categoría desactivada (aunque el servidor lea con `service_role`).
+15. `migrations/20260929000015_product_images_limit.sql`: el bucket `product-images` admite hasta 4 MB.
+16. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.
 

@@ -14,7 +14,8 @@ export const PROOF_EXTENSION = {
   "application/pdf": "pdf",
 } as const satisfies Record<(typeof PROOF_MIME_TYPES)[number], string>;
 
-export const PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+/** Imágenes de productos y categorías: 4 MB (mismo límite de Vercel que los comprobantes). */
+export const PRODUCT_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
 export const PRODUCT_IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 
 export type DetectedMime = "image/jpeg" | "image/png" | "image/webp" | "application/pdf";
@@ -45,4 +46,21 @@ export function checkProofBytes(bytes: Uint8Array): ProofCheck {
     return { ok: false, error: "Solo se admiten archivos JPG, PNG o PDF." };
   }
   return { ok: true, mime, extension: PROOF_EXTENSION[mime] };
+}
+
+export type ImageCheck =
+  | { ok: true; mime: (typeof PRODUCT_IMAGE_MIME_TYPES)[number]; extension: string }
+  | { ok: false; error: string };
+
+const IMAGE_EXTENSION = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" } as const;
+
+/** Validación de una imagen de producto o categoría en el servidor: tamaño y tipo real (JPG, PNG o WebP). */
+export function checkImageBytes(bytes: Uint8Array): ImageCheck {
+  if (bytes.byteLength === 0) return { ok: false, error: "El archivo está vacío." };
+  if (bytes.byteLength > PRODUCT_IMAGE_MAX_BYTES) return { ok: false, error: "La imagen pesa más de 4 MB." };
+  const mime = sniffMime(bytes);
+  if (mime !== "image/jpeg" && mime !== "image/png" && mime !== "image/webp") {
+    return { ok: false, error: "Solo se admiten imágenes JPG, PNG o WebP." };
+  }
+  return { ok: true, mime, extension: IMAGE_EXTENSION[mime] };
 }

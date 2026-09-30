@@ -1602,6 +1602,87 @@ begin
     'el orden queda contiguo de 0 a n-1';
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- Producto en el carrito cuya categoría se desactiva: no disponible aunque se lea con la clave de servidor
+-- ---------------------------------------------------------------------------
+insert into public.products (id, category_id, nombre, slug, precio, stock, activo)
+values ('50000000-0000-0000-0000-0000000000c1', '40000000-0000-0000-0000-000000000012', 'Producto de categoría apagable', 'p-cat-off', 10, 10, true);
+-- Está en el carrito de la cuenta c1
+insert into public.cart_items (user_id, product_id, cantidad)
+values ('00000000-0000-0000-0000-0000000000c1', '50000000-0000-0000-0000-0000000000c1', 2);
+
+do $$
+declare
+  pid constant uuid := '50000000-0000-0000-0000-0000000000c1';
+  c1 constant uuid := '00000000-0000-0000-0000-0000000000c1';
+  items constant text := '[{"product_id":"50000000-0000-0000-0000-0000000000c1","nombre":"Producto de categoría apagable","precio_unitario":10,"cantidad":2}]';
+  o record;
+  rs integer;
+begin
+  -- Con la categoría activa, el producto se vende
+  assert public.category_visible('40000000-0000-0000-0000-000000000012'), 'la categoría está activa';
+
+  -- Se desactiva la subcategoría
+  update public.categories set activa = false where id = '40000000-0000-0000-0000-000000000012';
+
+  -- La tienda (RLS) ya no lo ve...
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  assert (select count(*) from public.products where id = pid) = 0, 'la tienda no ve el producto';
+  reset role;
+
+  -- ...pero el servidor (service_role se salta RLS) SÍ lo lee: por eso create_order lo comprueba sola.
+  set local role service_role;
+  assert (select count(*) from public.products where id = pid) = 1, 'con la clave de servidor el producto se lee';
+  begin
+    perform public.create_order(c1, 'C1', 'c1@test.ec', '0999999991', '{}'::jsonb, items::jsonb, 20, 0, 0, 0, 20, 48);
+    raise exception 'create_order no debe vender un producto de una categoría desactivada';
+  exception when raise_exception then
+    assert sqlerrm = 'stock_insuficiente', 'categoría desactivada: ' || sqlerrm;
+  end;
+  reset role;
+  assert (select stock_reservado from public.products where id = pid) = 0, 'no quedó nada reservado';
+  assert (select count(*) from public.cart_items where user_id = c1 and product_id = pid) = 1,
+    'un pedido rechazado no toca el carrito';
+
+  -- Lo mismo si la que se desactiva es la categoría PADRE (la subcategoría sigue activa)
+  update public.categories set activa = true where id = '40000000-0000-0000-0000-000000000012';
+  update public.categories set activa = false where id = '40000000-0000-0000-0000-000000000001';
+  set local role service_role;
+  begin
+    perform public.create_order(c1, 'C1', 'c1@test.ec', '0999999991', '{}'::jsonb, items::jsonb, 20, 0, 0, 0, 20, 48);
+    raise exception 'create_order no debe vender si el padre está desactivado';
+  exception when raise_exception then
+    assert sqlerrm = 'stock_insuficiente', 'padre desactivado: ' || sqlerrm;
+  end;
+  reset role;
+
+  -- Al reactivar, se vende con normalidad
+  update public.categories set activa = true where id = '40000000-0000-0000-0000-000000000001';
+  set local role service_role;
+  select * into o from public.create_order(c1, 'C1', 'c1@test.ec', '0999999991', '{}'::jsonb, items::jsonb, 20, 0, 0, 0, 20, 48);
+  reset role;
+  assert o.o_referencia is not null, 'reactivada la categoría, el pedido se crea';
+  select stock_reservado into rs from public.products where id = pid;
+  assert rs = 2, 'y aparta el stock';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Buckets: límites de tamaño y tipos
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  assert (select file_size_limit from storage.buckets where id = 'product-images') = 4194304,
+    'las imágenes de productos admiten hasta 4 MB';
+  assert (select file_size_limit from storage.buckets where id = 'payment-proofs') = 4194304,
+    'los comprobantes admiten hasta 4 MB';
+  assert (select public from storage.buckets where id = 'product-images'), 'product-images es público (lectura)';
+  assert not (select public from storage.buckets where id = 'payment-proofs'), 'payment-proofs es privado';
+  assert (select allowed_mime_types from storage.buckets where id = 'product-images') @> array['image/jpeg', 'image/png', 'image/webp']
+     and cardinality((select allowed_mime_types from storage.buckets where id = 'product-images')) = 3,
+    'product-images solo admite JPG, PNG y WebP';
+end $$;
+
 rollback;
 
 select 'RLS OK' as resultado;

@@ -13,6 +13,7 @@ import { Field, FormError, SelectField } from "@/components/ui/form-controls";
 import { PROVINCIAS } from "@/config/ecuador";
 import { resetCartAfterOrder, useCartItems, useCartReady } from "@/lib/cart-store";
 import { formatUsd } from "@/lib/format";
+import { blocksCheckout, cartLineStatus } from "@/lib/cart-status";
 import { computeOrderTotals, type TotalsSettings } from "@/lib/order-totals";
 import type { StoreProduct } from "@/types/store";
 
@@ -102,10 +103,7 @@ export function CheckoutView({
     const product = byId.get(item.productId);
     return product ? [{ product, cantidad: item.cantidad }] : [];
   });
-  const unavailable = items.some((i) => {
-    const p = byId.get(i.productId);
-    return !p || i.cantidad > p.disponible;
-  });
+  const unavailable = items.some((i) => blocksCheckout(cartLineStatus(i.cantidad, byId.get(i.productId))));
   const totals = computeOrderTotals(
     lines.map((l) => ({ precio: l.product.precio, precioFinal: l.product.precioFinal, cantidad: l.cantidad })),
     settings,

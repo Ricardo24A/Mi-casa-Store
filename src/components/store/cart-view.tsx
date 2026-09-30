@@ -9,6 +9,7 @@ import { ProductImage } from "@/components/store/product-image";
 import { buttonClass } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { EmptyState } from "@/components/ui/empty-state";
+import { blocksCheckout, cartLineStatus, lineNotice } from "@/lib/cart-status";
 import { removeFromCart, setCartQuantity, useCartItems, useCartReady } from "@/lib/cart-store";
 import { fromCents, toCents } from "@/lib/pricing";
 import { formatUsd } from "@/lib/format";
@@ -104,7 +105,7 @@ export function CartView() {
   }
   const canCheckout = items.every((i) => {
     const p = byId.get(i.productId);
-    return p && p.disponible >= i.cantidad;
+    return !blocksCheckout(cartLineStatus(i.cantidad, p));
   });
 
   return (
@@ -118,14 +119,14 @@ export function CartView() {
             if (!p) {
               return (
                 <li key={item.productId} className="flex items-center justify-between gap-4 rounded-card border border-line bg-surface p-4">
-                  <p className="text-sm text-ink-soft">Este producto ya no está disponible.</p>
+                  <p role="alert" className="text-sm text-sale-ink">{lineNotice(cartLineStatus(item.cantidad, undefined))}</p>
                   <button type="button" onClick={() => removeFromCart(item.productId)} className={buttonClass("secondary", "sm")}>
                     Quitar
                   </button>
                 </li>
               );
             }
-            const over = item.cantidad > p.disponible;
+            const notice = lineNotice(cartLineStatus(item.cantidad, p));
             return (
               <li key={item.productId} className="flex gap-4 rounded-card border border-line bg-surface p-4">
                 <Link href={`/producto/${p.slug}`} className="block w-24 shrink-0 self-start overflow-hidden rounded-lg border border-line">
@@ -140,11 +141,9 @@ export function CartView() {
                     <PriceTag product={p} />
                   </div>
 
-                  {over && (
+                  {notice && (
                     <p className="mt-2 text-sm text-sale-ink" role="alert">
-                      {p.disponible === 0
-                        ? "Agotado. Quítalo para continuar."
-                        : `Solo quedan ${p.disponible}. Reduce la cantidad para continuar.`}
+                      {notice}
                     </p>
                   )}
 

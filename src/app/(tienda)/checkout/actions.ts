@@ -2,6 +2,7 @@
 
 import { CHECKOUT_REQUIRES_ACCOUNT } from "@/config/site";
 import { getAdminSession } from "@/lib/auth";
+import { cartLineStatus, lineNotice } from "@/lib/cart-status";
 import { readCartLines } from "@/lib/cart-server";
 import { getProductsByIds } from "@/lib/catalog";
 import { computeOrderTotals } from "@/lib/order-totals";
@@ -68,13 +69,13 @@ export async function crearPedido(input: unknown): Promise<CheckoutResult> {
   const lines = [];
   for (const item of items) {
     const p = byId.get(item.productId);
-    if (!p) return { ok: false, code: "stock", error: "Un producto de tu carrito ya no está disponible. Revisa tu carrito." };
-    if (item.cantidad > p.disponible) {
-      return {
-        ok: false,
-        code: "stock",
-        error: p.disponible === 0 ? `“${p.nombre}” se agotó.` : `De “${p.nombre}” solo quedan ${p.disponible}.`,
-      };
+    // Mismo criterio que el carrito: desactivado, de una categoría desactivada, agotado o por encima
+    // del stock. `p` viene de la lectura pública (RLS), así que un producto de una categoría
+    // desactivada llega como undefined aunque esté en el carrito de la cuenta.
+    const status = cartLineStatus(item.cantidad, p);
+    if (status.kind !== "ok" || !p) {
+      const name = p ? `“${p.nombre}”: ` : "";
+      return { ok: false, code: "stock", error: `${name}${lineNotice(status) ?? "No está disponible."} Revisa tu carrito.` };
     }
     lines.push({ product: p, cantidad: item.cantidad });
   }
