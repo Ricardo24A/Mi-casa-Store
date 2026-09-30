@@ -1452,6 +1452,156 @@ begin
     'la reserva nunca es negativa ni supera el stock';
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- Categorías del dashboard: activa/desactivada, dos niveles, nombres únicos y orden
+-- ---------------------------------------------------------------------------
+insert into public.categories (id, nombre, slug, orden) values
+  ('40000000-0000-0000-0000-000000000001', 'Adm A', 'adm-a', 0),
+  ('40000000-0000-0000-0000-000000000002', 'Adm B', 'adm-b', 1),
+  ('40000000-0000-0000-0000-000000000003', 'Adm C', 'adm-c', 2);
+insert into public.categories (id, parent_id, nombre, slug, orden) values
+  ('40000000-0000-0000-0000-000000000011', '40000000-0000-0000-0000-000000000001', 'Adm A1', 'adm-a1', 0),
+  ('40000000-0000-0000-0000-000000000012', '40000000-0000-0000-0000-000000000001', 'Adm A2', 'adm-a2', 1);
+insert into public.products (id, category_id, nombre, slug, precio, activo) values
+  ('50000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000011', 'Prod adm', 'prod-adm', 5, true);
+
+do $$
+declare
+  admin_claims constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}';
+  aal1_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal1"}';
+  cust_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}';
+  a1 constant uuid := '40000000-0000-0000-0000-000000000011';
+  a2 constant uuid := '40000000-0000-0000-0000-000000000012';
+  pa constant uuid := '40000000-0000-0000-0000-000000000001';
+begin
+  assert (select activa from public.categories where id = pa), 'una categoría nueva nace activa';
+
+  -- ---- Visible: solo con productos activos (como antes) -------------------------
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  assert (select count(*) from public.visible_categories where slug in ('adm-a', 'adm-a1')) = 2, 'con producto activo: visibles';
+  assert (select count(*) from public.visible_categories where slug = 'adm-a2') = 0, 'sin productos: oculta';
+  assert (select count(*) from public.products where slug = 'prod-adm') = 1, 'el producto se ve';
+  reset role;
+
+  -- ---- Desactivar la subcategoría: desaparece con su producto ---------------------
+  update public.categories set activa = false where id = a1;
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  assert (select count(*) from public.visible_categories where slug in ('adm-a', 'adm-a1')) = 0,
+    'desactivada la subcategoría, ni ella ni su categoría (sin más productos) se ven';
+  assert (select count(*) from public.products where slug = 'prod-adm') = 0, 'sus productos no se ven en la tienda';
+  reset role;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  assert (select count(*) from public.products where slug = 'prod-adm') = 0, 'un cliente tampoco los ve';
+  reset role;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  assert (select count(*) from public.products where slug = 'prod-adm') = 1, 'el administrador con 2FA sí los ve';
+  assert (select count(*) from public.categories where id = a1) = 1, 'y la categoría sigue existiendo para él';
+  reset role;
+  assert not public.category_visible(a1), 'category_visible: desactivada';
+
+  -- ---- Reactivar -------------------------------------------------------------------
+  update public.categories set activa = true where id = a1;
+  assert public.category_visible(a1), 'category_visible: reactivada';
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  assert (select count(*) from public.visible_categories where slug in ('adm-a', 'adm-a1')) = 2, 'reactivada: vuelve';
+  assert (select count(*) from public.products where slug = 'prod-adm') = 1, 'y sus productos';
+  reset role;
+
+  -- ---- Desactivar la categoría padre oculta a sus hijas aunque estén activas ---------
+  update public.categories set activa = false where id = pa;
+  assert not public.category_visible(a1), 'hija activa de un padre desactivado: no visible';
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  assert (select count(*) from public.visible_categories where slug in ('adm-a', 'adm-a1')) = 0, 'el padre desactivado oculta todo';
+  assert (select count(*) from public.products where slug = 'prod-adm') = 0, 'y sus productos';
+  reset role;
+  update public.categories set activa = true where id = pa;
+
+  -- ---- Dos niveles -----------------------------------------------------------------
+  begin
+    insert into public.categories (parent_id, nombre, slug) values (a1, 'Nieta', 'adm-nieta');
+    raise exception 'no debe haber un tercer nivel';
+  exception when check_violation then null; end;
+  begin
+    update public.categories set parent_id = '40000000-0000-0000-0000-000000000002' where id = pa;
+    raise exception 'una categoría con subcategorías no pasa a ser subcategoría';
+  exception when check_violation then null; end;
+  update public.categories set parent_id = '40000000-0000-0000-0000-000000000002' where id = '40000000-0000-0000-0000-000000000003';
+  assert (select parent_id from public.categories where id = '40000000-0000-0000-0000-000000000003') = '40000000-0000-0000-0000-000000000002',
+    'una categoría sin hijas sí puede pasar a subcategoría';
+  update public.categories set parent_id = null where id = '40000000-0000-0000-0000-000000000003';
+
+  -- ---- Nombres únicos dentro del mismo padre ---------------------------------------
+  begin
+    insert into public.categories (nombre, slug) values ('ADM a', 'adm-a-otra');
+    raise exception 'un nombre repetido (sin importar mayúsculas) debe rechazarse';
+  exception when unique_violation then null; end;
+  insert into public.categories (parent_id, nombre, slug) values ('40000000-0000-0000-0000-000000000002', 'Adm A1', 'adm-b-a1');
+
+  -- ---- Ordenar ---------------------------------------------------------------------
+  -- Permisos
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  begin
+    perform public.admin_move_category(a2, 'arriba');
+    raise exception 'un cliente no ordena categorías';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'cliente: ' || sqlerrm; end;
+  perform set_config('request.jwt.claims', aal1_claims, true);
+  begin
+    perform public.admin_move_category(a2, 'arriba');
+    raise exception 'un admin sin 2FA no ordena categorías';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'admin aal1: ' || sqlerrm; end;
+  reset role;
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin
+    perform public.admin_move_category(a2, 'arriba');
+    raise exception 'anon no ordena categorías';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  -- Con el administrador
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin
+    perform public.admin_move_category(a2, 'lado');
+    raise exception 'la dirección debe ser válida';
+  exception when raise_exception then assert sqlerrm = 'direccion_invalida', 'dirección: ' || sqlerrm; end;
+  begin
+    perform public.admin_move_category(gen_random_uuid(), 'arriba');
+    raise exception 'la categoría debe existir';
+  exception when raise_exception then assert sqlerrm = 'categoria_no_encontrada', 'inexistente: ' || sqlerrm; end;
+
+  perform public.admin_move_category(a2, 'arriba');
+  reset role;
+  assert (select orden from public.categories where id = a2) = 0 and (select orden from public.categories where id = a1) = 1,
+    'A2 sube y A1 baja';
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  perform public.admin_move_category(a2, 'arriba');   -- ya es la primera: no cambia
+  perform public.admin_move_category(a1, 'abajo');    -- ya es la última: no cambia
+  reset role;
+  assert (select orden from public.categories where id = a2) = 0 and (select orden from public.categories where id = a1) = 1,
+    'en los extremos no cambia nada';
+
+  -- Con órdenes repetidos o con huecos, se renumera de 0 a n-1 sin repetir
+  update public.categories set orden = 7 where id in (a1, a2);
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  perform public.admin_move_category(a1, 'arriba');
+  reset role;
+  assert (select count(distinct orden) from public.categories where parent_id = pa) = 2
+     and (select min(orden) from public.categories where parent_id = pa) = 0
+     and (select max(orden) from public.categories where parent_id = pa) = 1,
+    'el orden queda contiguo de 0 a n-1';
+end $$;
+
 rollback;
 
 select 'RLS OK' as resultado;

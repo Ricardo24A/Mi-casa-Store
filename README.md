@@ -43,7 +43,8 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 10. `migrations/20260929000010_replace_payment_proof.sql`: estado `reemplazado`, un solo comprobante activo por pedido (historial, máximo 3), transiciones válidas del comprobante y `submit_payment_proof` con reemplazo.
 11. `migrations/20260929000011_order_expiry.sql`: `reserva_activa`, liberar y consumir la reserva, `expire_orders()` y el cron `expire-orders` (pg_cron, cada 5 minutos).
 12. `migrations/20260929000012_order_transitions.sql`: `admin_approve_order`, `admin_reject_proof`, `admin_reject_order` y `admin_cancel_order` (una función por cambio de estado). Quita el UPDATE directo de `orders.estado` y de `payment_proofs`.
-13. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
+13. `migrations/20260929000013_categories_admin.sql`: `categories.activa`, `category_visible()`, la vista `visible_categories` y la política de `products` respetan las categorías desactivadas, dos niveles, nombres únicos por padre y `admin_move_category`.
+14. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.
 

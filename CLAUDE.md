@@ -81,6 +81,7 @@ Las categorías y subcategorías **siempre existen en la base de datos** (el due
 - Una **subcategoría** es visible si tiene al menos un producto **activo**.
 - Una **categoría** es visible si alguna de sus subcategorías visibles tiene productos. Se muestra con sus subcategorías visibles y sus productos; las subcategorías vacías no aparecen.
 - Ejemplo: si el dueño solo publica una freidora de aire en Electrodomésticos → Freidoras de aire, en la tienda aparece únicamente "Electrodomésticos" con esa subcategoría y ese producto. Las otras siete categorías no se ven.
+- El dueño también puede **desactivar** una categoría o subcategoría (`activa = false`): desaparece de la tienda junto con sus subcategorías y sus productos, aunque tengan productos activos. Es distinto de "oculta por estar vacía": el dashboard las muestra con etiquetas distintas ("Desactivada" y "Oculta en la tienda: sin productos activos"). La regla está en la base de datos (`category_visible()`, la vista y la política de `products`), no solo en la interfaz.
 - Se aplica en **todos** los lugares de la vista del cliente: menú principal, sección de categorías del home, filtros del catálogo, buscador y sitemap.
 - Si alguien abre a mano la URL de una categoría o subcategoría sin productos, responder **404** (no una página vacía).
 - Si la tienda todavía no tiene ningún producto activo, el home muestra un mensaje sencillo ("Estamos preparando el catálogo") en lugar de categorías vacías.
