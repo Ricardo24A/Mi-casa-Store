@@ -36,7 +36,9 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 3. `migrations/20260929000003_storage.sql`: buckets `product-images` (público) y `payment-proofs` (privado).
 4. `migrations/20260929000004_visible_categories.sql`: vista de categorías con productos activos.
 5. `migrations/20260929000005_admin_aal2.sql`: `is_admin()` exige 2FA (aal2); umbral de poco stock y enlaces de redes en `store_settings`.
-6. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
+6. `migrations/20260929000006_customer_accounts.sql`: nombre del registro en el perfil, direcciones de envío del cliente y documentación de `orders.user_id`.
+7. `migrations/20260929000007_create_order.sql`: función `create_order` (pedido atómico con stock apartado, solo `service_role`).
+8. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.
 
@@ -65,6 +67,21 @@ El dashboard exige un segundo factor (TOTP) en cada sesión. En el primer acceso
 
 3. La siguiente vez que inicie sesión, el dashboard le pedirá enrolar un factor nuevo. Que registre dos dispositivos.
 4. Si sospechas que la cuenta fue comprometida, cambia también su contraseña y cierra sus sesiones (Users → Sign out user).
+
+### Cuentas de clientes (`/cuenta`)
+
+Registro, login, confirmación de correo y recuperación de contraseña usan Supabase Auth. Configuración necesaria en Supabase → Authentication:
+
+1. **URL Configuration:** `Site URL` = el dominio del sitio; en `Redirect URLs` agrega `https://TU-DOMINIO/**` (y `http://localhost:3000/**` en desarrollo).
+2. **Email Templates** (recomendado: el enlace funciona aunque se abra en otro navegador). Reemplaza el enlace por:
+   - *Confirm signup*: `{{ .SiteURL }}/cuenta/confirmar?token_hash={{ .TokenHash }}&type=email`
+   - *Reset password*: `{{ .SiteURL }}/cuenta/confirmar?token_hash={{ .TokenHash }}&type=recovery`
+3. **Sign In / Providers → Email:** deja activo "Confirm email".
+4. **SMTP:** el correo integrado de Supabase tiene un límite muy bajo y es solo para pruebas. Antes de publicar configura SMTP propio con Resend (Authentication → SMTP Settings).
+
+El rol nunca lo envía el cliente: el trigger `handle_new_user` crea todo perfil como `customer` e ignora `raw_user_meta_data`. Hay un solo login (`/login`) para clientes y administrador. Un cliente va a su destino o al home; un administrador va a `/admin`, donde se le pide registrar o verificar el 2FA: con solo la contraseña nunca obtiene el panel. `/admin/login` y `/cuenta/login` redirigen a `/login`.
+
+**Turnstile:** crea un widget en Cloudflare y define `NEXT_PUBLIC_TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` (ver `.env.example`). En producción, sin el secreto el servidor rechaza registros y logins de clientes.
 
 ### Pruebas de la base de datos
 

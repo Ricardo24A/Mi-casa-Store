@@ -1,8 +1,15 @@
 import { z } from "zod";
 
+// Mensajes de Zod en español por defecto (los de cada campo importante se afinan abajo).
+z.config(z.locales.es());
+
 /** Texto sin espacios sobrantes y con largo acotado. */
 export const text = (min: number, max: number) =>
-  z.string().trim().min(min).max(max);
+  z
+    .string()
+    .trim()
+    .min(min, { error: min <= 1 ? "Este campo es obligatorio" : `Usa al menos ${min} caracteres` })
+    .max(max, { error: `Usa como máximo ${max} caracteres` });
 
 /** Dinero en USD con hasta 2 decimales. */
 export const money = z

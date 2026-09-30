@@ -1,9 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { adminRedirect, areaForPath } from "@/lib/admin-access";
 import { getSupabaseEnv } from "@/lib/env";
-
-// Rutas del dashboard que no exigen sesión (el login vive aquí; se crea en la Fase 3).
-const ADMIN_PUBLIC_PATHS = ["/admin/login"];
 
 function isAdminPath(pathname: string) {
   return pathname === "/admin" || pathname.startsWith("/admin/");
@@ -12,7 +10,8 @@ function isAdminPath(pathname: string) {
 /**
  * 1) Refresca la sesión de Supabase (las cookies se renuevan aquí) cuando hay cookie `sb-*`
  *    o la ruta es del dashboard; las visitas públicas sin sesión no llaman a Supabase.
- * 2) Protege /admin/*: exige sesión y rol admin. Es la primera barrera; las páginas y acciones
+ * 2) Protege /admin/*: exige sesión, rol admin y segundo factor (aal2). La decisión la toma
+ *    `adminRedirect()`, la misma que usa `requireAdmin()`. Es la primera barrera; las páginas y acciones
  *    del dashboard vuelven a comprobarlo en servidor con `requireAdmin()` (src/lib/auth.ts),
  *    y RLS es la barrera final en la base de datos.
  */
@@ -67,9 +66,7 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!adminRoute || ADMIN_PUBLIC_PATHS.includes(pathname)) {
-    return response;
-  }
+  if (!adminRoute) return response;
 
   // Redirige conservando las cookies de sesión recién refrescadas.
   const redirectTo = (path: string) => {
@@ -78,17 +75,28 @@ export async function proxy(request: NextRequest) {
     return redirect;
   };
 
-  if (!user) return redirectTo("/admin/login");
+  let role: "admin" | "customer" | null = null;
+  let aal: "aal1" | "aal2" | null = null;
+  if (user) {
+    // Un admin en aal1 puede leer su propia fila (RLS: id = auth.uid()).
+    const [{ data: profile }, { data: claims }] = await Promise.all([
+      supabase.from("profiles").select("role").eq("id", user.id).maybeSingle(),
+      supabase.auth.getClaims(),
+    ]);
+    role = profile?.role === "admin" || profile?.role === "customer" ? profile.role : null;
+    aal = claims?.claims.aal === "aal2" ? "aal2" : claims?.claims.aal === "aal1" ? "aal1" : null;
+  }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
+  const target = adminRedirect(areaForPath(pathname), {
+    userId: user?.id ?? null,
+    role,
+    aal,
+    hasVerifiedFactor: (user?.factors ?? []).some(
+      (f) => f.factor_type === "totp" && f.status === "verified",
+    ),
+  });
 
-  if (profile?.role !== "admin") return redirectTo("/");
-
-  return response;
+  return target ? redirectTo(target) : response;
 }
 
 export const config = {

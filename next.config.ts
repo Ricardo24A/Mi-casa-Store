@@ -35,6 +35,17 @@ const nextConfig: NextConfig = {
         ]
       : [],
   },
+  // Login único: las direcciones anteriores redirigen a él (el resto de la consulta, como `next`,
+  // se conserva). El dashboard sigue protegido por el proxy y por requireAdmin().
+  async redirects() {
+    return [
+      { source: "/admin/login", destination: "/login", permanent: false },
+      { source: "/cuenta/login", destination: "/login", permanent: false },
+      { source: "/cuenta/registro", destination: "/registro", permanent: false },
+      { source: "/cuenta/recuperar", destination: "/recuperar", permanent: false },
+      { source: "/cuenta/nueva-clave", destination: "/nueva-clave", permanent: false },
+    ];
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

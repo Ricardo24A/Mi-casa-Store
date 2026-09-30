@@ -465,6 +465,177 @@ end $$;
 
 reset role;
 
+-- ---------------------------------------------------------------------------
+-- Cuentas de clientes: el rol nunca viene del cliente
+-- ---------------------------------------------------------------------------
+-- Un registro que intenta colarse como admin desde raw_user_meta_data sigue siendo customer.
+insert into auth.users (id, raw_user_meta_data) values
+  ('00000000-0000-0000-0000-0000000000d1', '{"role":"admin","full_name":"  Ana Prueba  "}'),
+  ('00000000-0000-0000-0000-0000000000d2', '{"role":"admin","full_name":""}');
+
+do $$
+begin
+  assert (select role from public.profiles where id = '00000000-0000-0000-0000-0000000000d1') = 'customer',
+    'el rol del registro no sale de raw_user_meta_data';
+  assert (select full_name from public.profiles where id = '00000000-0000-0000-0000-0000000000d1') = 'Ana Prueba',
+    'el nombre del registro se copia recortado';
+  assert (select full_name from public.profiles where id = '00000000-0000-0000-0000-0000000000d2') is null,
+    'un nombre vacío queda en null';
+end $$;
+
+-- Direcciones: cada cliente ve y edita solo las suyas
+insert into public.customer_addresses (user_id, etiqueta, destinatario, telefono, provincia, ciudad, direccion, es_predeterminada) values
+  ('00000000-0000-0000-0000-0000000000c1', 'Casa', 'C1', '0999999991', 'Pichincha', 'Quito', 'Av. Siempre Viva 123', true),
+  ('00000000-0000-0000-0000-0000000000c2', 'Casa', 'C2', '0999999992', 'Guayas', 'Guayaquil', 'Calle Falsa 456', true);
+
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}', true);
+
+do $$
+declare n integer;
+begin
+  assert (select count(*) from public.customer_addresses) = 1, 'el cliente solo ve sus direcciones';
+
+  update public.customer_addresses set etiqueta = 'Casa 2' where user_id = '00000000-0000-0000-0000-0000000000c2';
+  get diagnostics n = row_count;
+  assert n = 0, 'el cliente no edita direcciones ajenas';
+
+  begin
+    insert into public.customer_addresses (user_id, etiqueta, destinatario, telefono, provincia, ciudad, direccion)
+    values ('00000000-0000-0000-0000-0000000000c2', 'X', 'X', '0999999999', 'Guayas', 'Guayaquil', 'Calle 12345');
+    raise exception 'no debe poder crear una dirección a nombre de otro';
+  exception when insufficient_privilege then null; end;
+
+  -- Marcar otra como predeterminada quita la marca de la anterior
+  insert into public.customer_addresses (user_id, etiqueta, destinatario, telefono, provincia, ciudad, direccion, es_predeterminada)
+  values ('00000000-0000-0000-0000-0000000000c1', 'Trabajo', 'C1', '0999999991', 'Pichincha', 'Quito', 'Av. Oficina 99', true);
+  assert (select count(*) from public.customer_addresses where es_predeterminada) = 1,
+    'solo una dirección predeterminada';
+  assert (select etiqueta from public.customer_addresses where es_predeterminada) = 'Trabajo',
+    'la última marcada es la predeterminada';
+
+  -- Máximo 10 direcciones (ya tiene 2)
+  for i in 1..8 loop
+    insert into public.customer_addresses (user_id, etiqueta, destinatario, telefono, provincia, ciudad, direccion)
+    values ('00000000-0000-0000-0000-0000000000c1', 'Extra ' || i, 'C1', '0999999991', 'Pichincha', 'Quito', 'Calle extra ' || i);
+  end loop;
+  begin
+    insert into public.customer_addresses (user_id, etiqueta, destinatario, telefono, provincia, ciudad, direccion)
+    values ('00000000-0000-0000-0000-0000000000c1', 'Once', 'C1', '0999999991', 'Pichincha', 'Quito', 'Calle once 11');
+    raise exception 'el límite de 10 direcciones no se aplicó';
+  exception when check_violation then null; end;
+
+  -- El rol sigue sin poder cambiarse desde la API
+  begin
+    update public.profiles set role = 'admin' where id = '00000000-0000-0000-0000-0000000000c1';
+    raise exception 'un cliente no debe poder volverse admin';
+  exception when insufficient_privilege then null; end;
+end $$;
+
+reset role;
+
+-- El visitante anónimo no puede leer direcciones
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon"}', true);
+do $$
+begin
+  begin
+    perform 1 from public.customer_addresses;
+    raise exception 'anon no debe leer direcciones';
+  exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- create_order: pedido atómico con cuenta obligatoria y stock apartado
+-- ---------------------------------------------------------------------------
+-- Solo el servidor (service_role) la ejecuta; ni anon ni un usuario autenticado.
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}', true);
+do $$
+begin
+  begin
+    perform public.create_order('00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991',
+      '{}'::jsonb, '[]'::jsonb, 10, 0, 0, 0, 10, 48);
+    raise exception 'un usuario autenticado no debe ejecutar create_order';
+  exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon"}', true);
+do $$
+begin
+  begin
+    perform public.create_order(null, 'X', 'x@test.ec', '0999999999', '{}'::jsonb, '[]'::jsonb, 10, 0, 0, 0, 10, 48);
+    raise exception 'anon no debe ejecutar create_order';
+  exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+
+set local role service_role;
+do $$
+declare
+  o record;
+  reservado_antes integer;
+  item text := '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10,"cantidad":2}]';
+begin
+  select stock_reservado into reservado_antes from public.products where id = '20000000-0000-0000-0000-000000000001';
+
+  -- Sin usuario: se rechaza aunque el servidor lo intente
+  begin
+    perform public.create_order(null, 'X', 'x@test.ec', '0999999999', '{}'::jsonb, item::jsonb, 20, 0, 0, 0, 20, 48);
+    raise exception 'un pedido sin usuario debe rechazarse';
+  exception when raise_exception then
+    assert sqlerrm = 'cuenta_requerida', 'motivo del rechazo sin usuario: ' || sqlerrm;
+  end;
+
+  -- Pedido válido: guarda el usuario, aparta el stock y crea las líneas
+  select * into o from public.create_order('00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991',
+    '{"ciudad":"Quito"}'::jsonb, item::jsonb, 20, 0, 1, 3, 22, 48);
+  assert o.o_referencia ~ '^MC-[A-Z2-9]{8}$', 'el pedido recibe su referencia';
+  assert (select user_id from public.orders where id = o.o_id) = '00000000-0000-0000-0000-0000000000c1',
+    'el pedido guarda el user_id';
+  assert (select estado from public.orders where id = o.o_id) = 'pendiente_pago', 'nace pendiente de pago';
+  assert (select count(*) from public.order_items where order_id = o.o_id) = 1, 'crea sus líneas';
+  assert (select stock_reservado from public.products where id = '20000000-0000-0000-0000-000000000001') = reservado_antes + 2,
+    'aparta el stock';
+
+  -- Más de lo disponible: se rechaza y no aparta nada
+  begin
+    perform public.create_order('00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991',
+      '{}'::jsonb,
+      '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10,"cantidad":100}]'::jsonb,
+      1000, 0, 0, 0, 1000, 48);
+    raise exception 'no debe vender más de lo disponible';
+  exception when raise_exception then
+    assert sqlerrm = 'stock_insuficiente', 'motivo del rechazo por stock: ' || sqlerrm;
+  end;
+  assert (select stock_reservado from public.products where id = '20000000-0000-0000-0000-000000000001') = reservado_antes + 2,
+    'un pedido rechazado no deja stock apartado';
+
+  -- Producto inactivo: no se vende
+  begin
+    perform public.create_order('00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991',
+      '{}'::jsonb,
+      '[{"product_id":"20000000-0000-0000-0000-000000000002","nombre":"Inactivo","precio_unitario":10,"cantidad":1}]'::jsonb,
+      10, 0, 0, 0, 10, 48);
+    raise exception 'no debe vender un producto inactivo';
+  exception when raise_exception then
+    assert sqlerrm = 'stock_insuficiente', 'motivo del rechazo de inactivo: ' || sqlerrm;
+  end;
+
+  -- El total debe cuadrar (constraint de la tabla)
+  begin
+    perform public.create_order('00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991',
+      '{}'::jsonb, item::jsonb, 20, 0, 0, 0, 99, 48);
+    raise exception 'un total que no cuadra debe rechazarse';
+  exception when check_violation then null; end;
+end $$;
+reset role;
+
 rollback;
 
 select 'RLS OK' as resultado;

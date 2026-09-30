@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, User } from "lucide-react";
 import { CartLink } from "@/components/store/cart-link";
 import { MobileMenu } from "@/components/store/mobile-menu";
 import { SearchForm } from "@/components/store/search-form";
@@ -18,7 +18,14 @@ export async function Header() {
           Mi casa Store
         </Link>
         <SearchForm className="mx-auto hidden w-full max-w-md md:block" />
-        <div className="ml-auto md:ml-0">
+        <div className="ml-auto flex items-center md:ml-0">
+          <Link
+            href="/cuenta"
+            aria-label="Mi cuenta"
+            className="inline-flex size-11 items-center justify-center rounded-lg text-ink hover:bg-bg-alt"
+          >
+            <User className="size-5" aria-hidden />
+          </Link>
           <CartLink />
         </div>
       </Container>

@@ -100,7 +100,7 @@ Las plantillas ya existen en `prototipos/cliente/src/data/index.ts` (`presetProd
 
 ### Funciones
 
-- Login del dueño con 2FA.
+- Login del dueño: el login único de la tienda (`/login`, ver "Acceso y compra" en la sección 6) y 2FA obligatorio antes de entrar al panel.
 - CRUD de productos: nombre, descripción, precio, stock, SKU, activo/inactivo, varias imágenes.
 - Gestión de categorías y de plantillas de productos comunes. El formulario de alta de producto lista **todas** las categorías; el listado de categorías del dashboard marca con una etiqueta ("Oculta en la tienda: sin productos activos") las que aún no tienen productos.
 - **Descuentos**: porcentaje o monto fijo; a un producto, una categoría o toda la tienda; con fechas; cupón opcional.
@@ -109,17 +109,53 @@ Las plantillas ya existen en `prototipos/cliente/src/data/index.ts` (`presetProd
 - Configuración: datos del negocio, cuentas bancarias para transferencia, costo y regla de envío, porcentaje de descuento por transferencia, tiempo límite para pagar.
 - Panel resumen: ventas recientes, pedidos por revisar, productos con poco stock.
 
+### Prototipo del dashboard (Lovable): qué tomar y qué cambiar
+
+Referencia de estructura y flujo. El diseño real usa el mismo sistema visual que la tienda (paleta #F0DFC6 y verde #3E5C4B, componentes propios). El prototipo se revisó en ancho móvil: verificar también escritorio (menú lateral fijo, tablas anchas).
+
+**Estructura.** Menú lateral (cajón en móvil): Resumen, Productos, Categorías, Descuentos, Pedidos (con contador de pendientes) y Configuración; al pie, el usuario y "Salir". Campana de avisos arriba a la derecha.
+
+| Pantalla | Qué trae el prototipo | Qué cambiar en el real |
+|---|---|---|
+| Login | Correo, contraseña y código de 2 pasos, con datos prellenados | Sin credenciales prellenadas ni fijas. Ya no tiene pantalla propia: usa el login único de la tienda (`/login`). 2FA (TOTP de Supabase) obligatorio, no opcional, en `/admin/2fa` y `/admin/verificar`. |
+| Resumen | Saludo con nombre, botón "Nuevo producto", 4 tarjetas (ventas del mes, pedidos pendientes, por aprobar, poco stock), gráfico de 30 días, lista de inventario bajo | Nombre desde `profiles`, no fijo. Datos reales. "Ventas" cuenta solo pedidos pagado, enviado o entregado. Sin "% vs mes anterior" si no hay datos. Umbral de poco stock configurable (por defecto 5). |
+| Productos | Búsqueda, filtros por categoría y estado, tabla (imagen, nombre, SKU, categoría, precio con precio anterior tachado, stock en rojo si es bajo) | SKU opcional. Paginación. Editar, activar/desactivar. No eliminar productos con pedidos (desactivarlos). |
+| Nuevo producto | Asistente de 4 pasos: categoría, subcategoría, plantilla u "Otro producto (manual)", detalles (nombre*, SKU, descripción, precio*, unidades, activo, imágenes múltiples). Botones "Guardar producto" y "Guardar y agregar otro" | Mantener el flujo. La plantilla rellena nombre, descripción, precio sugerido y prefijo de SKU. Añadir "destacado". Validar imágenes (JPG/PNG/WebP, 5 MB, tipo real), elegir portada y orden. |
+| Categorías | Árbol con icono, contador, editar, borrar, reordenar con flechas, "Añadir subcategoría" y "Nueva categoría" | No borrar categorías con productos. Etiqueta "Oculta en la tienda" si no tiene productos activos. Slug automático. Imagen opcional. |
+| Descuentos | Tabla (nombre, tipo, aplica a, vigencia) y modal (nombre, tipo % o monto, valor, aplicar a, fechas, cupón opcional, vista previa) | Mantener. Añadir alcance por producto, estado (activo/vencido), activar/desactivar, editar y eliminar. Quitar el aviso de "demostración". |
+| Pedidos | Filtros por estado y por pago; tabla (#, cliente, fecha, total, método, estado); modal con productos, cliente y entrega, comprobante, "Cambiar estado", "Rechazar" y "Aprobar pago" | Quitar "Tarjeta" y el filtro de pago (solo transferencia). Mostrar referencia `MC-XXXXXXXX`, monto del pedido, fecha de subida y el archivo (imagen o PDF) con URL firmada temporal. "Rechazar" exige motivo. "Aprobar" solo si hay comprobante en revisión. El estado no es un desplegable libre: solo transiciones válidas mediante botones. El envío es un campo del pedido, no un producto. Cancelar o vencer libera el stock reservado. Todo mediante acciones de servidor. |
+| Configuración | Datos del negocio, una cuenta bancaria (banco, número, titular), costo de envío y descuento por transferencia (%), seguridad (interruptor de 2FA, cambiar contraseña) | Varias cuentas bancarias, con tipo de cuenta e identificación. Añadir envío gratis desde (opcional), plazo de pago en horas y enlaces de redes. 2FA siempre obligatorio. Cambiar contraseña exige reautenticar. |
+
+**Falta en el prototipo y hay que diseñar:** estados de carga, vacío y error; qué muestra la campana (pedidos con comprobante nuevo); pantalla de detalle de pedido a página completa en móvil si el modal queda estrecho.
+
+**Categorías:** el árbol del prototipo del dashboard difiere del prototipo de clientes (por ejemplo, Electrodomésticos trae Pequeños electrodomésticos, Limpieza y Climatización). Se mantiene la semilla ya aplicada en Supabase; el dueño la edita desde Categorías.
+
 ## 6. Vista del cliente
 
 - Inicio (ver "Contenido del home" abajo).
 - Catálogo por categoría y subcategoría, con búsqueda, filtros y orden. **Solo aparecen las categorías y subcategorías que tienen productos activos** (ver sección 4, "Visibilidad de categorías").
 - Página de producto: galería, precio, precio con descuento, stock, agregar al carrito.
-- Carrito y checkout: datos de contacto, dirección de entrega y pago por transferencia.
+- Carrito y checkout: datos de contacto, dirección de entrega y pago por transferencia. **Para pagar hay que iniciar sesión** (ver "Acceso y compra").
 - Pantalla de pago: cuentas bancarias del negocio, **monto exacto** y **código de referencia del pedido** para el concepto. El comprador **sube el comprobante** (imagen o PDF), que es **obligatorio** para confirmar el pedido.
 - Confirmación: "Recibimos tu comprobante, lo revisaremos". El pedido no está "pagado" hasta que el dueño lo apruebe.
 - Seguimiento del estado del pedido y opción de subir otro comprobante si fue rechazado.
 - Páginas: contacto, privacidad, términos y envíos. Responsive, pensada primero para celular.
 - Rutas en español: `/catalogo`, `/categoria/[slug]` (el slug puede ser de una categoría o de una subcategoría; son únicos en toda la tabla), `/producto/[slug]`, `/carrito`, `/checkout`, `/confirmacion`, `/admin/...`.
+
+### Acceso y compra (decidido con el cliente)
+
+**Un solo login para clientes y administrador.** Reemplaza la regla anterior de rechazar al administrador en el login de clientes: ya no hay dos accesos.
+
+- Ruta única `/login` (más `/registro`, `/recuperar` y `/nueva-clave`). `/admin/login` y `/cuenta/login` (y los equivalentes de registro y recuperación) solo redirigen a ella, conservando `next`.
+- Pantalla completa, sin el header ni el footer de la tienda, en dos columnas: a la izquierda el logo (`public/brand/logo-original.png`) sobre el fondo crema de la marca; a la derecha el formulario. Registro y recuperación usan el mismo diseño. Sin textos de marketing: el único lema es "Todo para tu hogar", que ya está en el home.
+- Después de validar la contraseña: un `customer` va al `next` (solo si pasa `safeNext`) o al home; un `admin` va siempre a `/admin`, donde el proxy le pide registrar o verificar el 2FA. **Un admin nunca obtiene el panel sin sesión `aal2`**, y un cliente nunca entra a `/admin`.
+- Mismos mensajes de error genéricos para cualquier fallo, Turnstile y validación con Zod. La pantalla no revela si un correo es de un administrador (el rol solo se conoce después de acertar la contraseña).
+- Enlace visible "Continuar como invitado" que lleva al catálogo.
+
+**Compra con cuenta obligatoria.** Sin sesión se puede ver el catálogo y las fichas de producto y usar el carrito (vive en el navegador). Al pagar sin sesión se lleva al login/registro con `next=/checkout` y el mensaje "Inicia sesión o crea una cuenta para pagar. Tu carrito se conserva"; al volver el carrito sigue intacto.
+
+- La regla se aplica también en el servidor: la acción `crearPedido` rechaza si no hay usuario y guarda `user_id = auth.uid()` (`CHECKOUT_REQUIRES_ACCOUNT = true` en `src/config/site.ts`). La función SQL `create_order` exige un usuario y aparta el stock de forma atómica.
+- El checkout no deja pagar sin nombre, teléfono y dirección de envío; los pide ahí mismo (`customer_addresses`, creando la dirección si no hay) y guarda nombre y teléfono en `profiles` si faltaban. No pide cédula ni datos de facturación (decisión pendiente, sección 15).
 
 ### Contenido del home
 
@@ -141,9 +177,9 @@ Estructura: header, hero simple, categorías (solo las que tienen productos), "M
 | Envío | Fijo en el código: gratis desde $50, si no $8.99 | Configurable en el dashboard. Política pendiente del cliente |
 | Descuento por transferencia | 5% fijo en el código | Porcentaje configurable en Configuración (0 = desactivado) |
 | Estados de pedido | pendiente, pagado, enviado, entregado, cancelado | Agregar: comprobante recibido, rechazado, vencido |
-| Login admin | Credenciales fijas (`admin123`) | Solo demo. En producción: Supabase Auth con 2FA. Nada de credenciales en el código |
+| Login admin | Credenciales fijas (`admin123`) | Solo demo. En producción: login único de Supabase Auth (`/login`) y 2FA obligatorio. Nada de credenciales en el código |
 | Iconos | Emojis | SVG (`lucide-react`) |
-| "Mi cuenta" | "Próximamente" | Pendiente: compra como invitado o cuenta opcional |
+| "Mi cuenta" | "Próximamente" | `/cuenta`: mis pedidos, mis datos y direcciones. Cuenta obligatoria para pagar |
 | Datos | Productos, pedidos y descuentos de ejemplo en `data/index.ts` | Solo se aprovechan categorías y plantillas como semilla; lo demás es de ejemplo |
 
 ## 8. Flujo de pago por transferencia
@@ -192,6 +228,10 @@ Reglas en la base de datos: un pedido no pasa a `comprobante_recibido` sin compr
 - [ ] `npm audit` y dependencias actualizadas antes de publicar
 - [ ] Backups automáticos de la base de datos
 - [ ] Política de privacidad y consentimiento acordes a la normativa ecuatoriana de protección de datos personales (los comprobantes contienen datos bancarios)
+- [ ] **SMTP propio con Resend** para los correos de Supabase Auth (confirmar correo, recuperar contraseña); el correo integrado de Supabase solo sirve para pruebas
+- [ ] **Turnstile** en registro, login y recuperación de clientes, con claves reales (sin `TURNSTILE_SECRET_KEY` en producción el servidor rechaza); el login único ya lo incluye también para el administrador
+- [ ] **Rate limiting propio** en login (cliente y admin), registro, recuperar contraseña, checkout y subida de comprobantes, además del límite de Supabase Auth
+- [ ] **CSP estricta** con nonce; debe permitir `challenges.cloudflare.com` (script y frame de Turnstile) y `data:` en `img-src` (QR del 2FA)
 - [ ] Revisión de seguridad final antes de producción
 
 ## 11. Fuera de alcance por ahora
@@ -226,6 +266,9 @@ Una sesión de trabajo por fase. Al terminar cada una: probar, hacer commit y ac
 - Login admin con 2FA.
 - Alta de productos con plantillas y modo manual, subida de imágenes.
 - CRUD de categorías, precios y stock, y descuentos.
+- Resumen con datos reales y Configuración (datos del negocio, cuentas bancarias, envío, descuento por transferencia, plazo de pago): la pantalla de pago de la siguiente fase depende de esos datos.
+- La sección Pedidos del menú se agrega junto con su pantalla real en la fase de gestión de pedidos; no dejar enlaces que no lleven a nada.
+- Cambios de catálogo por acciones de servidor con `requireAdmin()`, validación Zod e invalidación de la etiqueta `catalogo`.
 
 ### Fase 4: checkout y transferencia
 - Checkout, creación de pedido con totales calculados en servidor y reserva de stock.
@@ -268,7 +311,6 @@ Una sesión de trabajo por fase. Al terminar cada una: probar, hacer commit y ac
 - Porcentaje de descuento por transferencia (el prototipo usa 5%).
 - Políticas de devolución y garantía, si el cliente quiere publicarlas.
 - Tiempo límite para subir el comprobante (ej. 24 o 48 horas).
-- Compra como invitado o cuenta de cliente.
 - Facturación electrónica.
 - Categorías: confirmar con el cliente que un producto agotado pero activo mantiene visible su categoría (así está definido por ahora).
 

@@ -189,12 +189,20 @@ export function CartView() {
             El costo de envío se confirma al finalizar la compra. El pago es por transferencia bancaria y
             se confirma subiendo el comprobante.
           </p>
-          <button type="button" disabled className={buttonClass("primary", "lg", "mt-5 w-full")} aria-describedby="checkout-note">
-            Finalizar compra
-          </button>
-          <p id="checkout-note" className="mt-2 text-center text-xs text-ink-soft">
-            {canCheckout ? "El pago se habilitará próximamente." : "Revisa los productos marcados para continuar."}
-          </p>
+          {canCheckout ? (
+            <Link href="/checkout" className={buttonClass("primary", "lg", "mt-5 w-full")}>
+              Finalizar compra
+            </Link>
+          ) : (
+            <>
+              <button type="button" disabled className={buttonClass("primary", "lg", "mt-5 w-full")} aria-describedby="checkout-note">
+                Finalizar compra
+              </button>
+              <p id="checkout-note" className="mt-2 text-center text-xs text-ink-soft">
+                Revisa los productos marcados para continuar.
+              </p>
+            </>
+          )}
           <Link href="/catalogo" className="mt-4 flex min-h-11 items-center justify-center text-sm font-semibold text-accent hover:underline">
             Seguir comprando
           </Link>
