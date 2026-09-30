@@ -2,8 +2,10 @@ import Link from "next/link";
 import { cacheLife } from "next/cache";
 import { Suspense } from "react";
 import { FacebookIcon } from "@/components/store/facebook-icon";
+import { WhatsappIcon } from "@/components/store/whatsapp-icon";
 import { Container } from "@/components/ui/container";
 import { getCategoryTree } from "@/lib/catalog";
+import { formatEcPhone, telHref, whatsappHref } from "@/lib/phone-ec";
 import { getPublicStoreInfo } from "@/lib/store-info";
 
 const linkClass =
@@ -22,7 +24,8 @@ async function CurrentYear() {
 /** Solo enlaces a páginas que existen. Los demás (contacto, legales) se añaden cuando existan. */
 export async function Footer() {
   const [categories, info] = await Promise.all([getCategoryTree(), getPublicStoreInfo()]);
-  const hasContact = Boolean(info.email || info.telefono || info.direccion);
+  const phones = [info.telefono, info.telefonoSecundario].filter((p): p is string => Boolean(p));
+  const hasContact = Boolean(info.email || phones.length > 0 || info.direccion);
 
   return (
     <footer className="on-dark mt-12 bg-accent-hover text-bg">
@@ -33,13 +36,27 @@ export async function Footer() {
           {hasContact && (
             <address className="mt-3 text-sm not-italic text-accent-mid">
               {info.direccion && <p>{info.direccion}</p>}
-              {info.telefono && (
-                <p>
-                  <a href={`tel:${info.telefono.replace(/[^+\d]/g, "")}`} className={linkClass}>
-                    {info.telefono}
-                  </a>
-                </p>
-              )}
+              {phones.map((phone) => {
+                const wa = whatsappHref(phone);
+                return (
+                  <p key={phone} className="flex items-center gap-1">
+                    <a href={telHref(phone)} className={linkClass}>
+                      {formatEcPhone(phone)}
+                    </a>
+                    {wa && (
+                      <a
+                        href={wa}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`WhatsApp ${formatEcPhone(phone)}`}
+                        className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg hover:bg-accent hover:text-bg"
+                      >
+                        <WhatsappIcon className="size-5" />
+                      </a>
+                    )}
+                  </p>
+                );
+              })}
               {info.email && (
                 <p>
                   <a href={`mailto:${info.email}`} className={linkClass}>

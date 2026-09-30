@@ -7,6 +7,7 @@ const base = {
   nombre_negocio: "Mi casa Store",
   email_contacto: "",
   telefono: "",
+  telefono_secundario: "",
   direccion: "",
   facebook: "",
   horas_limite_pago: "48",
@@ -30,6 +31,7 @@ test("lo mínimo es válido y lo vacío queda sin definir", () => {
     nombre_negocio: "Mi casa Store",
     email_contacto: null,
     telefono: null,
+    telefono_secundario: null,
     direccion: null,
     cuentas_bancarias: [account],
     costo_envio: null,
@@ -112,4 +114,14 @@ test("readBankRows agrupa los campos indexados y acota la cantidad", () => {
   assert.equal(rows[1].numero, "");
   assert.equal(readBankRows((n) => (n === "cuentas.count" ? "9999" : "")).length, 15);
   assert.equal(readBankRows(() => "").length, 0);
+});
+
+test("teléfonos del negocio: se normalizan y el secundario no se repite ni va solo", () => {
+  const ok = parse({ telefono: "+593 99 841 2673", telefono_secundario: "(04) 263-8159" });
+  assert.equal(ok.success && ok.data.telefono, "0998412673");
+  assert.equal(ok.success && ok.data.telefono_secundario, "042638159");
+  assert.match(errors({ telefono: "12345" }).telefono, /celular|fijo/);
+  assert.match(errors({ telefono: "0998412673", telefono_secundario: "593 998412673" }).telefono_secundario, /ya está en el otro campo/);
+  assert.match(errors({ telefono: "", telefono_secundario: "0998412673" }).telefono_secundario, /principal/);
+  assert.equal(parse({ telefono: "  " }).success && (parse({ telefono: "  " }) as { data: { telefono: null } }).data.telefono, null);
 });

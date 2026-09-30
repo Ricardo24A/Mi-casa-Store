@@ -48,6 +48,7 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 15. `migrations/20260929000015_product_images_limit.sql`: el bucket `product-images` admite hasta 4 MB.
 16. `migrations/20260929000016_discounts_guards.sql`: porcentaje menor que 100, el destino de un descuento debe existir (producto o categoría) y se borra el descuento cuando se borra su destino.
 17. `migrations/20260929000017_store_settings_admin.sql`: Configuración. Plazo de pago de 1 a 168 horas, descuento por transferencia de 0 a menos de 100, costo de envío opcional (`null` = "A coordinar"), cuentas bancarias y redes validadas en la base, permisos de `store_settings` solo para el admin con 2FA (columnas editables, sin insert ni delete) y la vista pública `store_public_info` con solo nombre, contacto y redes.
+18. `migrations/20260929000018_store_phones.sql`: teléfono principal y secundario del negocio, normalizados (solo dígitos, formato nacional) y validados para Ecuador (celular 09 + 8 dígitos; fijo 02 a 07 + 7 dígitos; sin repetidos ni secuencias obvias; el secundario no repite al principal ni va solo), y la columna nueva en la vista pública `store_public_info`.
 17. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.

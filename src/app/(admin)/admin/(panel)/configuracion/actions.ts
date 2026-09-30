@@ -18,6 +18,7 @@ const FIELDS = [
   "nombre_negocio",
   "email_contacto",
   "telefono",
+  "telefono_secundario",
   "direccion",
   "facebook",
   "horas_limite_pago",
@@ -40,6 +41,12 @@ function dbError(error: { message: string }): SettingsFormState {
   }
   if (m.includes("store_settings_descuento_transferencia_check")) {
     return { error: "Revisa los datos marcados.", fieldErrors: { descuento_transferencia_pct: "Debe ser menor que 100." } };
+  }
+  if (m.includes("store_settings_telefono_secundario_valido") || m.includes("store_settings_telefonos_distintos")) {
+    return { error: "Revisa los datos marcados.", fieldErrors: { telefono_secundario: "Revisa el teléfono secundario." } };
+  }
+  if (m.includes("store_settings_telefono_valido")) {
+    return { error: "Revisa los datos marcados.", fieldErrors: { telefono: "Revisa el teléfono principal." } };
   }
   if (m.includes("store_settings_cuentas_validas")) return { error: "Revisa los datos de las cuentas bancarias." };
   if (m.includes("store_settings_redes_validas")) {

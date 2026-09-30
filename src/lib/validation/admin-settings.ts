@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeEcPhone } from "../phone-ec.ts";
 import { text } from "./common.ts";
 
 const MAX_AMOUNT = 99_999_999.99;
@@ -41,6 +42,23 @@ export const bankAccountFormSchema = z.object({
   identificacion: text(5, 20),
 });
 
+/**
+ * Teléfono del negocio: vacío = sin definir; si se escribe, se normaliza a solo dígitos en formato
+ * nacional (mismas reglas que `valid_ec_phone` en la base de datos).
+ */
+const phone = z
+  .string()
+  .trim()
+  .transform((raw, ctx) => {
+    if (raw === "") return null;
+    const r = normalizeEcPhone(raw);
+    if (!r.ok) {
+      ctx.addIssue({ code: "custom", message: r.error });
+      return z.NEVER;
+    }
+    return r.digits;
+  });
+
 const facebookUrl = z
   .string()
   .trim()
@@ -68,7 +86,8 @@ export const settingsFormSchema = z
   .object({
     nombre_negocio: text(1, 80),
     email_contacto: optional(z.email("Correo no válido").max(254)),
-    telefono: optional(text(5, 30)),
+    telefono: phone,
+    telefono_secundario: phone,
     direccion: optional(text(1, 200)),
     facebook: facebookUrl,
     horas_limite_pago: required(
@@ -88,6 +107,13 @@ export const settingsFormSchema = z
     cuentas: z.array(bankAccountFormSchema).max(MAX_BANK_ACCOUNTS, `Máximo ${MAX_BANK_ACCOUNTS} cuentas`),
   })
   .superRefine((v, ctx) => {
+    if (v.telefono_secundario !== null) {
+      if (v.telefono === null) {
+        ctx.addIssue({ code: "custom", path: ["telefono_secundario"], message: "Primero escribe el teléfono principal" });
+      } else if (v.telefono === v.telefono_secundario) {
+        ctx.addIssue({ code: "custom", path: ["telefono_secundario"], message: "Este número ya está en el otro campo" });
+      }
+    }
     const seen = new Set<string>();
     v.cuentas.forEach((c, i) => {
       const key = `${c.banco.toLowerCase()}|${c.numero}`;
@@ -106,6 +132,7 @@ export const settingsFormSchema = z
     nombre_negocio: v.nombre_negocio,
     email_contacto: v.email_contacto,
     telefono: v.telefono,
+    telefono_secundario: v.telefono_secundario,
     direccion: v.direccion,
     cuentas_bancarias: v.cuentas,
     costo_envio: v.costo_envio,

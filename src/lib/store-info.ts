@@ -1,4 +1,5 @@
 import { cacheLife, cacheTag } from "next/cache";
+import { isNormalizedEcPhone } from "@/lib/phone-ec";
 import { createPublicClient } from "@/lib/supabase/public";
 
 export const STORE_INFO_TAG = "tienda";
@@ -6,7 +7,9 @@ export const STORE_INFO_TAG = "tienda";
 export interface StoreInfo {
   nombre: string;
   email: string | null;
+  /** Solo dígitos, formato nacional y ya validado (ver `phone-ec.ts`). */
   telefono: string | null;
+  telefonoSecundario: string | null;
   direccion: string | null;
   facebook: string | null;
 }
@@ -25,10 +28,10 @@ export async function getPublicStoreInfo(): Promise<StoreInfo> {
   cacheLife("minutes");
   cacheTag(STORE_INFO_TAG);
 
-  const empty: StoreInfo = { nombre: DEFAULT_NAME, email: null, telefono: null, direccion: null, facebook: null };
+  const empty: StoreInfo = { nombre: DEFAULT_NAME, email: null, telefono: null, telefonoSecundario: null, direccion: null, facebook: null };
   const { data, error } = await createPublicClient()
     .from("store_public_info")
-    .select("nombre_negocio, email_contacto, telefono, direccion, enlaces_redes")
+    .select("nombre_negocio, email_contacto, telefono, telefono_secundario, direccion, enlaces_redes")
     .maybeSingle();
   if (error || !data) return empty;
 
@@ -37,7 +40,9 @@ export async function getPublicStoreInfo(): Promise<StoreInfo> {
   return {
     nombre: data.nombre_negocio || DEFAULT_NAME,
     email: data.email_contacto || null,
-    telefono: data.telefono || null,
+    // Defensivo: solo se publican números con el formato esperado
+    telefono: data.telefono && isNormalizedEcPhone(data.telefono) ? data.telefono : null,
+    telefonoSecundario: data.telefono_secundario && isNormalizedEcPhone(data.telefono_secundario) ? data.telefono_secundario : null,
     direccion: data.direccion || null,
     facebook,
   };

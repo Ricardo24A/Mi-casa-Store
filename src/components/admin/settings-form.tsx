@@ -6,6 +6,7 @@ import { guardarConfiguracion, type SettingsFormState } from "@/app/(admin)/admi
 import { buttonClass } from "@/components/ui/button";
 import { Field, FormError, FormSuccess, SelectField, SubmitButton } from "@/components/ui/form-controls";
 import type { SettingsDefaults } from "@/lib/admin-settings";
+import { formatEcPhoneInput, normalizeEcPhone } from "@/lib/phone-ec";
 import { MAX_BANK_ACCOUNTS, MAX_PAYMENT_HOURS } from "@/lib/validation/admin-settings";
 
 const initial: SettingsFormState = {};
@@ -19,6 +20,47 @@ function Section({ title, description, children }: { title: string; description?
       {description && <p className="mb-4 mt-1 text-sm text-ink-soft">{description}</p>}
       <div className={description ? "space-y-4" : "mt-4 space-y-4"}>{children}</div>
     </section>
+  );
+}
+
+/**
+ * Teléfono del negocio: formato mientras se escribe (099 123 4567 / (04) 234 5678); lo guardado son
+ * solo dígitos. Avisa si es celular (saldrá el logo de WhatsApp en el pie) o fijo.
+ */
+function PhoneField({
+  label,
+  name,
+  value,
+  onChange,
+  error,
+}: {
+  label: string;
+  name: string;
+  value: string;
+  onChange: (next: string) => void;
+  error?: string;
+}) {
+  const parsed = value.trim() === "" ? null : normalizeEcPhone(value);
+  const kind = parsed?.ok ? parsed.kind : null;
+  return (
+    <Field
+      label={label}
+      name={name}
+      type="tel"
+      inputMode="tel"
+      autoComplete="tel"
+      maxLength={24}
+      value={value}
+      onChange={(ev) => onChange(formatEcPhoneInput(ev.target.value, value))}
+      error={error}
+      hint={
+        kind === "celular"
+          ? "Celular: en el pie saldrá con el logo de WhatsApp."
+          : kind === "fijo"
+            ? "Fijo: se mostrará sin WhatsApp."
+            : "Celular (09…) o fijo con código de provincia"
+      }
+    />
   );
 }
 
@@ -40,7 +82,10 @@ export function SettingsForm({ defaults }: { defaults: SettingsDefaults }) {
         <Field label="Nombre del negocio *" name="nombre_negocio" required maxLength={80} value={v.nombre_negocio} onChange={(ev) => set("nombre_negocio", ev.target.value)} error={e.nombre_negocio} />
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Correo de contacto" name="email_contacto" type="email" maxLength={254} value={v.email_contacto} onChange={(ev) => set("email_contacto", ev.target.value)} error={e.email_contacto} />
-          <Field label="Teléfono" name="telefono" type="tel" maxLength={30} value={v.telefono} onChange={(ev) => set("telefono", ev.target.value)} error={e.telefono} />
+          <PhoneField label="Teléfono principal" name="telefono" value={v.telefono} onChange={(next) => set("telefono", next)} error={e.telefono} />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <PhoneField label="Teléfono secundario (opcional)" name="telefono_secundario" value={v.telefono_secundario} onChange={(next) => set("telefono_secundario", next)} error={e.telefono_secundario} />
         </div>
         <Field label="Dirección" name="direccion" maxLength={200} value={v.direccion} onChange={(ev) => set("direccion", ev.target.value)} error={e.direccion} />
         <Field

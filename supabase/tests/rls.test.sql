@@ -6,6 +6,18 @@
 begin;
 
 -- ---------------------------------------------------------------------------
+-- Configuración en estado conocido. `store_settings` es una sola fila que el dueño edita, así que
+-- las pruebas no pueden suponer sus valores reales (Facebook guardado, otro plazo, etc.). Se fija
+-- aquí, DENTRO de la transacción: el ROLLBACK final devuelve los valores reales.
+-- Regla de este archivo: toda prueba debe dar el mismo resultado sobre una base vacía y sobre una
+-- con datos reales; se compara contra la línea base de abajo o contra filas creadas por la prueba.
+-- ---------------------------------------------------------------------------
+update public.store_settings set
+  nombre_negocio = 'Mi casa Store', email_contacto = null, telefono = null, telefono_secundario = null,
+  direccion = null, cuentas_bancarias = '[]'::jsonb, costo_envio = null, envio_gratis_desde = null,
+  descuento_transferencia_pct = 0, horas_limite_pago = 48, umbral_stock_bajo = 5, enlaces_redes = '{}'::jsonb;
+
+-- ---------------------------------------------------------------------------
 -- Línea base: lo que ya hay en la base antes de insertar los datos de prueba.
 -- Las aserciones comparan contra estos valores (antes + lo insertado), así las pruebas
 -- funcionan también con pedidos y descuentos reales. Se guardan en variables de sesión
@@ -1842,11 +1854,11 @@ begin
   -- ---- La vista pública trae SOLO nombre, contacto y redes -------------------------------
   select array_agg(column_name::text order by column_name) into cols
   from information_schema.columns where table_schema = 'public' and table_name = 'store_public_info';
-  assert cols = array['direccion', 'email_contacto', 'enlaces_redes', 'nombre_negocio', 'telefono'],
+  assert cols = array['direccion', 'email_contacto', 'enlaces_redes', 'nombre_negocio', 'telefono', 'telefono_secundario'],
     'la vista pública solo expone nombre, contacto y redes: ' || coalesce(array_to_string(cols, ','), 'nada');
 
   update public.store_settings
-     set email_contacto = 'hola@test.ec', telefono = '0999999999', direccion = 'Calle 1',
+     set email_contacto = 'hola@test.ec', telefono = '0984126739', direccion = 'Calle 1',
          enlaces_redes = '{"facebook":"https://facebook.com/tienda"}'::jsonb,
          cuentas_bancarias = ('[' || good || ']')::jsonb;
 
@@ -1978,7 +1990,97 @@ begin
 
   -- La configuración vuelve a un estado neutro para lo que sigue
   update public.store_settings
-     set email_contacto = null, telefono = null, direccion = null, cuentas_bancarias = '[]'::jsonb, enlaces_redes = '{}'::jsonb;
+     set email_contacto = null, telefono = null, telefono_secundario = null, direccion = null, cuentas_bancarias = '[]'::jsonb, enlaces_redes = '{}'::jsonb;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Teléfonos del negocio: formato de Ecuador validado en la base de datos
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  admin_claims constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}';
+  n integer;
+  v text;
+begin
+  update public.store_settings set telefono = null, telefono_secundario = null;
+
+  -- Válidos: celular, fijo (9 dígitos) y los dos a la vez
+  update public.store_settings set telefono = '0984126739';
+  update public.store_settings set telefono = '042638159';
+  update public.store_settings set telefono = '0984126739', telefono_secundario = '022638159';
+  update public.store_settings set telefono_secundario = '042345678';  -- una secuencia de 7 dígitos en un fijo es posible
+  update public.store_settings set telefono_secundario = null;
+  foreach v in array array['022638159', '032638159', '052638159', '062638159', '072638159', '0912345670', '0991234567'] loop
+    update public.store_settings set telefono = v;
+  end loop;
+
+  -- Rechazados: formato
+  foreach v in array array[
+    '09841267391',      -- 11 dígitos
+    '098412673',        -- celular de 9 dígitos
+    '042638',           -- corto
+    '0823456789',       -- 08 no existe
+    '082638159',        -- código de provincia 08
+    '012638159',        -- código de provincia 01
+    '0901234567',       -- el tercer dígito no puede ser 0
+    '+593984126739',    -- sin +593
+    '593984126739',
+    '984126739',        -- sin el 0 inicial
+    '098 412 6739',     -- sin espacios
+    '(04) 2638159',     -- sin paréntesis
+    '04-263-8159',      -- sin guiones
+    '098412673a',       -- letras
+    '0984126739 0991234567',  -- dos números en un campo
+    '',                 -- vacío no es null
+    -- repetidos y secuencias
+    '0999999999', '0911111111', '0900000000', '022222222', '042222222',
+    '0912345678', '0987654321', '0923456789', '0998765432', '012345678'
+  ] loop
+    begin
+      update public.store_settings set telefono = v;
+      raise exception 'el teléfono % debía rechazarse', v;
+    exception when check_violation then null; end;
+  end loop;
+
+  -- Duplicado entre los dos campos, y secundario sin principal
+  update public.store_settings set telefono = '0984126739', telefono_secundario = null;
+  begin
+    update public.store_settings set telefono_secundario = '0984126739';
+    raise exception 'el secundario no puede repetir al principal';
+  exception when check_violation then null; end;
+  begin
+    update public.store_settings set telefono = null, telefono_secundario = '0991234567';
+    raise exception 'el secundario no puede ir sin principal';
+  exception when check_violation then null; end;
+  begin
+    update public.store_settings set telefono_secundario = '0991234567 0984126739';
+    raise exception 'un campo no admite dos números';
+  exception when check_violation then null; end;
+  begin
+    update public.store_settings set telefono_secundario = '098412673';
+    raise exception 'el secundario también se valida';
+  exception when check_violation then null; end;
+
+  -- El admin con 2FA escribe el secundario; un cliente no
+  update public.store_settings set telefono = '0984126739', telefono_secundario = null;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  update public.store_settings set telefono_secundario = '042638159';
+  get diagnostics n = row_count;
+  assert n = 1, 'el admin con 2FA edita el teléfono secundario';
+  perform set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}', true);
+  update public.store_settings set telefono_secundario = '0991234567';
+  get diagnostics n = row_count;
+  assert n = 0, 'un cliente no edita el teléfono secundario';
+  reset role;
+
+  -- La vista pública los trae
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  assert (select telefono_secundario from public.store_public_info) = '042638159', 'el público lee el teléfono secundario por la vista';
+  reset role;
+
+  update public.store_settings set telefono = null, telefono_secundario = null;
 end $$;
 
 rollback;
