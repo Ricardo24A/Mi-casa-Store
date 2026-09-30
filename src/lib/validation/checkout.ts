@@ -13,16 +13,13 @@ export const checkoutAddressSchema = z.object({
 });
 
 /**
- * Entrada de `crearPedido`. Solo llegan IDs y cantidades: nombres, precios, descuentos, envío y
- * total los calcula el servidor desde la base de datos (nunca se confía en el navegador).
- * La dirección es una guardada (`addressId`) o una nueva (`address`), no ambas.
+ * Entrada de `crearPedido`. Los productos NO llegan del navegador: el servidor lee el carrito de
+ * la cuenta (`cart_items`). Nombres, precios, descuentos, envío y total también los calcula el
+ * servidor desde la base de datos. La dirección es una guardada (`addressId`) o una nueva
+ * (`address`), no ambas.
  */
 export const checkoutInputSchema = z
   .object({
-    items: z
-      .array(z.object({ productId: uuid, cantidad: z.number().int().min(1).max(100) }))
-      .min(1, "Tu carrito está vacío")
-      .max(50),
     nombre: text(2, 120),
     telefono: phoneSchema,
     addressId: uuid.optional(),

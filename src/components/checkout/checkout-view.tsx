@@ -11,7 +11,7 @@ import { buttonClass } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, FormError, SelectField } from "@/components/ui/form-controls";
 import { PROVINCIAS } from "@/config/ecuador";
-import { clearCart, useCartItems } from "@/lib/cart-store";
+import { resetCartAfterOrder, useCartItems, useCartReady } from "@/lib/cart-store";
 import { formatUsd } from "@/lib/format";
 import { computeOrderTotals, type TotalsSettings } from "@/lib/order-totals";
 import type { StoreProduct } from "@/types/store";
@@ -44,6 +44,7 @@ export function CheckoutView({
 }) {
   const router = useRouter();
   const items = useCartItems();
+  const ready = useCartReady();
   const key = items.map((i) => `${i.productId}:${i.cantidad}`).join(",");
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [selected, setSelected] = useState(
@@ -70,6 +71,9 @@ export function CheckoutView({
     // `items` cambia de referencia con cada render del almacén; `key` resume su contenido.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
+
+  // Hasta saber de quién es el carrito no se muestra nada (ni el carrito vacío).
+  if (!ready) return <div className="h-64 animate-pulse rounded-card bg-bg-alt" aria-busy="true" />;
 
   if (items.length === 0) {
     return (
@@ -114,7 +118,6 @@ export function CheckoutView({
     setResult(null);
     startTransition(async () => {
       const res = await crearPedido({
-        items,
         nombre: text("nombre"),
         telefono: text("telefono"),
         ...(useNew
@@ -130,7 +133,7 @@ export function CheckoutView({
           : { addressId: selected }),
       });
       if (res.ok) {
-        clearCart();
+        resetCartAfterOrder();
         router.push(`/confirmacion/${res.referencia}`);
         return;
       }

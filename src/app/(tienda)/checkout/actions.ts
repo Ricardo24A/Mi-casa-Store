@@ -2,6 +2,7 @@
 
 import { CHECKOUT_REQUIRES_ACCOUNT } from "@/config/site";
 import { getAdminSession } from "@/lib/auth";
+import { readCartLines } from "@/lib/cart-server";
 import { getProductsByIds } from "@/lib/catalog";
 import { computeOrderTotals } from "@/lib/order-totals";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -49,7 +50,7 @@ export async function crearPedido(input: unknown): Promise<CheckoutResult> {
   if (!parsed.success) {
     return { ok: false, error: "Revisa los datos marcados.", fieldErrors: fieldErrors(parsed.error) };
   }
-  const { items, nombre, telefono, addressId, address } = parsed.data;
+  const { nombre, telefono, addressId, address } = parsed.data;
 
   const supabase = await createClient();
   const {
@@ -59,7 +60,9 @@ export async function crearPedido(input: unknown): Promise<CheckoutResult> {
     return { ok: false, code: "login", error: "Tu sesión expiró. Inicia sesión de nuevo." };
   }
 
-  // 3) Precios y stock reales, desde la base de datos
+  // 3) El carrito de la cuenta (base de datos) y sus precios y stock reales
+  const items = await readCartLines(supabase, user.id);
+  if (items.length === 0) return { ok: false, error: "Tu carrito está vacío." };
   const products = await getProductsByIds([...new Set(items.map((i) => i.productId))]);
   const byId = new Map(products.map((p) => [p.id, p]));
   const lines = [];

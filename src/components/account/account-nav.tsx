@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { cerrarSesionCliente } from "@/app/(tienda)/cuenta/actions";
+import { clearCartOnSignOut } from "@/lib/cart-store";
 import { cn } from "@/lib/utils";
 
 const ITEMS = [
@@ -35,7 +36,7 @@ export function AccountNav() {
           );
         })}
         <li className="ml-auto">
-          <form action={cerrarSesionCliente}>
+          <form action={cerrarSesionCliente} onSubmit={clearCartOnSignOut}>
             <button
               type="submit"
               className="-mb-px inline-flex min-h-11 items-center gap-2 whitespace-nowrap px-4 text-sm font-semibold text-ink-soft transition-colors duration-150 hover:text-ink"

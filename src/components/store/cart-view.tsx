@@ -9,7 +9,7 @@ import { ProductImage } from "@/components/store/product-image";
 import { buttonClass } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { EmptyState } from "@/components/ui/empty-state";
-import { removeFromCart, setCartQuantity, useCartItems } from "@/lib/cart-store";
+import { removeFromCart, setCartQuantity, useCartItems, useCartReady } from "@/lib/cart-store";
 import { fromCents, toCents } from "@/lib/pricing";
 import { formatUsd } from "@/lib/format";
 import type { StoreProduct } from "@/types/store";
@@ -18,6 +18,7 @@ type Loaded = { key: string; products: StoreProduct[] } | { key: string; error: 
 
 export function CartView() {
   const items = useCartItems();
+  const ready = useCartReady();
   const key = items.map((i) => i.productId).join(",");
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
@@ -40,6 +41,16 @@ export function CartView() {
     // `items` cambia de referencia con cada cantidad; los precios solo dependen de los IDs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
+
+  // Hasta saber de quién es el carrito no se muestra nada (ni el carrito vacío).
+  if (!ready) {
+    return (
+      <Container className="py-8" aria-busy="true">
+        <h1 className="mb-6 text-3xl font-semibold tracking-tight text-ink">Tu carrito</h1>
+        <div className="h-28 animate-pulse rounded-card bg-bg-alt" />
+      </Container>
+    );
+  }
 
   if (items.length === 0) {
     return (

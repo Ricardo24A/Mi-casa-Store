@@ -1,101 +1,80 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { z } from "zod";
+import {
+  agregarLinea,
+  fijarCantidad,
+  fusionarCarrito,
+  obtenerCarrito,
+  quitarLinea,
+  vaciarCarrito,
+} from "@/app/(tienda)/carrito/actions";
+import { createCartStore, type CartApi, type CartStorage, type CartStore } from "@/lib/cart-core";
+import { EMPTY_ITEMS, MAX_LINES, MAX_QUANTITY, type CartItem } from "@/lib/cart-logic";
 
 /**
- * Carrito del navegador. Guarda SOLO qué producto y cuántas unidades (nunca precios ni
- * nombres): los precios se piden a la base de datos cada vez que se muestra el carrito, y el
- * checkout los vuelve a calcular en el servidor. Lo que hay en localStorage lo puede editar
- * cualquiera, así que se valida con Zod al leerlo.
+ * Carrito del navegador. Conecta el núcleo (`cart-core.ts`, con pruebas) con localStorage y con
+ * las acciones de servidor reales.
+ *  - Invitado: el carrito vive en localStorage.
+ *  - Con sesión: vive en la base de datos, ligado al usuario; aquí solo hay una vista con
+ *    actualización optimista. Nunca se guardan precios ni nombres.
+ * Hasta que el layout de la tienda dice quién tiene la sesión (`useCartReady()` es false) no se
+ * muestra ni se modifica nada: así nunca se ve, ni un instante, el carrito de otro usuario.
  */
 
-const STORAGE_KEY = "mcs-cart-v1";
-export const MAX_LINES = 50;
-export const MAX_QUANTITY = 100;
+export { MAX_LINES, MAX_QUANTITY };
+export type { CartItem };
 
-const itemSchema = z.object({
-  productId: z.uuid(),
-  cantidad: z.number().int().min(1).max(MAX_QUANTITY),
-});
-const cartSchema = z.array(itemSchema).max(MAX_LINES);
+const storage: CartStorage = {
+  getItem: (k) => window.localStorage.getItem(k),
+  setItem: (k, v) => window.localStorage.setItem(k, v),
+  removeItem: (k) => window.localStorage.removeItem(k),
+};
 
-export type CartItem = z.infer<typeof itemSchema>;
+const api: CartApi = {
+  get: (expected) => obtenerCarrito(expected),
+  add: (expected, productId, cantidad) => agregarLinea(expected, productId, cantidad),
+  set: (expected, productId, cantidad) => fijarCantidad(expected, productId, cantidad),
+  remove: (expected, productId) => quitarLinea(expected, productId),
+  clear: (expected) => vaciarCarrito(expected),
+  merge: (expected, local) => fusionarCarrito(expected, local),
+};
 
-const EMPTY: CartItem[] = [];
-let cached: { raw: string | null; items: CartItem[] } = { raw: null, items: EMPTY };
-const listeners = new Set<() => void>();
+let instance: CartStore | null = null;
+let listening = false;
 
-function read(): CartItem[] {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (raw === cached.raw) return cached.items;
-    const parsed = raw ? cartSchema.safeParse(JSON.parse(raw)) : null;
-    const items = parsed?.success ? parsed.data : EMPTY;
-    cached = { raw, items: items.length === 0 ? EMPTY : items };
-    return cached.items;
-  } catch {
-    // localStorage bloqueado o JSON dañado: se trata como carrito vacío.
-    return EMPTY;
+function store(): CartStore {
+  if (!instance) instance = createCartStore({ storage, api });
+  if (!listening) {
+    listening = true;
+    // Otras pestañas: cambios en localStorage o avisos ("ping") de que cambió el carrito de la cuenta.
+    window.addEventListener("storage", (e) => instance?.onStorageEvent(e.key));
+    // Al volver a esta pestaña o dispositivo, se vuelve a pedir el carrito de la cuenta.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") instance?.refresh();
+    });
   }
+  return instance;
 }
 
-function write(items: CartItem[]) {
-  try {
-    const raw = items.length === 0 ? null : JSON.stringify(items);
-    if (raw === null) window.localStorage.removeItem(STORAGE_KEY);
-    else window.localStorage.setItem(STORAGE_KEY, raw);
-    cached = { raw, items: items.length === 0 ? EMPTY : items };
-  } catch {
-    // Sin almacenamiento disponible: el carrito no se puede guardar.
-  }
-  listeners.forEach((l) => l());
-}
-
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  // Cambios hechos desde otra pestaña.
-  const onStorage = (e: StorageEvent) => {
-    if (e.key === STORAGE_KEY) listener();
-  };
-  window.addEventListener("storage", onStorage);
-  return () => {
-    listeners.delete(listener);
-    window.removeEventListener("storage", onStorage);
-  };
-}
+const subscribe = (listener: () => void) => store().subscribe(listener);
 
 export function useCartItems(): CartItem[] {
-  return useSyncExternalStore(subscribe, read, () => EMPTY);
+  return useSyncExternalStore(subscribe, () => store().getSnapshot(), () => EMPTY_ITEMS);
 }
 
-/** Suma `cantidad` al producto sin pasar de `max` (unidades disponibles). */
-export function addToCart(productId: string, cantidad: number, max: number) {
-  const items = read();
-  const existing = items.find((i) => i.productId === productId);
-  const limit = Math.min(max, MAX_QUANTITY);
-  if (existing) {
-    write(
-      items.map((i) =>
-        i.productId === productId
-          ? { ...i, cantidad: Math.min(i.cantidad + cantidad, limit) }
-          : i,
-      ),
-    );
-  } else if (items.length < MAX_LINES) {
-    write([...items, { productId, cantidad: Math.min(cantidad, limit) }]);
-  }
+/** true cuando ya se sabe de quién es el carrito y se puede mostrar. Antes, mostrar un esqueleto. */
+export function useCartReady(): boolean {
+  return useSyncExternalStore(subscribe, () => store().isReady(), () => false);
 }
 
-export function setCartQuantity(productId: string, cantidad: number) {
-  const clamped = Math.min(Math.max(Math.trunc(cantidad), 1), MAX_QUANTITY);
-  write(read().map((i) => (i.productId === productId ? { ...i, cantidad: clamped } : i)));
-}
+/** Usuario con sesión al que pertenece la vista actual (null = invitado o aún no se sabe). */
+export const syncCartSession = (userId: string | null, serverItems: CartItem[]) => store().sync(userId, serverItems);
+export const releaseCartSession = () => store().release();
+export const clearCartOnSignOut = () => store().signOut();
+export const resetCartAfterOrder = () => store().afterOrder();
 
-export function removeFromCart(productId: string) {
-  write(read().filter((i) => i.productId !== productId));
-}
-
-export function clearCart() {
-  write([]);
-}
+export const addToCart = (productId: string, cantidad: number, max: number) => store().add(productId, cantidad, max);
+export const setCartQuantity = (productId: string, cantidad: number) => store().setQuantity(productId, cantidad);
+export const removeFromCart = (productId: string) => store().remove(productId);
+export const clearCart = () => store().clear();

@@ -154,6 +154,7 @@ Referencia de estructura y flujo. El diseño real usa el mismo sistema visual qu
 
 **Compra con cuenta obligatoria.** Sin sesión se puede ver el catálogo y las fichas de producto y usar el carrito (vive en el navegador). Al pagar sin sesión se lleva al login/registro con `next=/checkout` y el mensaje "Inicia sesión o crea una cuenta para pagar. Tu carrito se conserva"; al volver el carrito sigue intacto.
 
+- **Carrito:** sin sesión vive en `localStorage`; con sesión vive en la base de datos (`cart_items`) y se conserva al cerrar sesión, al limpiar el navegador y entre dispositivos. Al iniciar sesión o registrarse se fusiona el carrito local con el de la cuenta (suma repetidos, limitado por stock y por el máximo por línea) y se borra la copia local. Al cerrar sesión se limpia la vista y la copia local, pero no se borra nada del servidor. Un usuario nunca ve el carrito de otro. Los productos desactivados o agotados se muestran con aviso y no pasan al checkout.
 - La regla se aplica también en el servidor: la acción `crearPedido` rechaza si no hay usuario y guarda `user_id = auth.uid()` (`CHECKOUT_REQUIRES_ACCOUNT = true` en `src/config/site.ts`). La función SQL `create_order` exige un usuario y aparta el stock de forma atómica.
 - El checkout no deja pagar sin nombre, teléfono y dirección de envío; los pide ahí mismo (`customer_addresses`, creando la dirección si no hay) y guarda nombre y teléfono en `profiles` si faltaban. No pide cédula ni datos de facturación (decisión pendiente, sección 15).
 
@@ -204,6 +205,7 @@ Aplicado en `supabase/migrations/`. Toda tabla tiene RLS activo y permisos (GRAN
 - `discounts` (id, nombre, tipo: porcentaje | monto_fijo, valor, alcance: producto | categoria | tienda, target_id, codigo de cupón opcional, inicia, termina, activo). El público solo lee los automáticos (sin cupón) y vigentes.
 - `orders` (id, referencia única `MC-XXXXXXXX` generada por trigger, user_id opcional, contacto_nombre/email/telefono, documento opcional, direccion_envio jsonb, access_token, estado, subtotal, descuento, descuento_transferencia, envio, total, cupon, notas, vence_en). El total debe cuadrar: `subtotal - descuento - descuento_transferencia + envio`.
 - `order_items` (id, order_id, product_id, nombre, precio_unitario, cantidad): precio y nombre congelados al comprar.
+- `cart_items` (user_id, product_id, cantidad, created_at, updated_at; clave primaria `(user_id, product_id)`): carrito de la cuenta. Solo producto y cantidad, nunca precios. Máximo 50 líneas y cantidad 1 a 99. RLS: cada usuario solo ve y edita las suyas; `create_order` las vacía al crear el pedido.
 - `payment_proofs` (id, order_id, archivo en el bucket privado `payment-proofs`, hash SHA-256, estado: en_revision | aprobado | rechazado, motivo, revisado_por, revisado_en). Un rechazo exige motivo.
 - `store_settings` (una sola fila: datos del negocio, cuentas_bancarias, costo_envio, envio_gratis_desde, descuento_transferencia_pct, horas_limite_pago)
 - Vista `visible_categories`: categorías y subcategorías con al menos un producto activo (sección 4).

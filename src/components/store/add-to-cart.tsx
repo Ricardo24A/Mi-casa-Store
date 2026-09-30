@@ -4,11 +4,12 @@ import Link from "next/link";
 import { useState } from "react";
 import { Check, Minus, Plus } from "lucide-react";
 import { buttonClass } from "@/components/ui/button";
-import { addToCart, useCartItems } from "@/lib/cart-store";
+import { addToCart, useCartItems, useCartReady } from "@/lib/cart-store";
 
 export function AddToCart({ productId, disponible }: { productId: string; disponible: number }) {
   const [quantity, setQuantity] = useState(1);
   const [justAdded, setJustAdded] = useState(false);
+  const ready = useCartReady();
   const inCart = useCartItems().find((i) => i.productId === productId)?.cantidad ?? 0;
 
   if (disponible <= 0) {
@@ -60,7 +61,7 @@ export function AddToCart({ productId, disponible }: { productId: string; dispon
         <button
           type="button"
           onClick={add}
-          disabled={remaining <= 0}
+          disabled={!ready || remaining <= 0}
           className={buttonClass("primary", "lg", "flex-1")}
         >
           {remaining <= 0 ? "Ya tienes todas las unidades" : "Agregar al carrito"}

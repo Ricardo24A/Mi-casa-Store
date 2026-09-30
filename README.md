@@ -38,7 +38,8 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 5. `migrations/20260929000005_admin_aal2.sql`: `is_admin()` exige 2FA (aal2); umbral de poco stock y enlaces de redes en `store_settings`.
 6. `migrations/20260929000006_customer_accounts.sql`: nombre del registro en el perfil, direcciones de envío del cliente y documentación de `orders.user_id`.
 7. `migrations/20260929000007_create_order.sql`: función `create_order` (pedido atómico con stock apartado, solo `service_role`).
-8. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
+8. `migrations/20260929000008_cart_items.sql`: carrito de la cuenta (`cart_items`, con RLS por dueño) y `create_order` actualizada para vaciarlo al crear el pedido.
+9. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.
 

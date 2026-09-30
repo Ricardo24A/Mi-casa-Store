@@ -548,6 +548,115 @@ end $$;
 reset role;
 
 -- ---------------------------------------------------------------------------
+-- cart_items: carrito de la cuenta (solo el dueño; anon nada; máximo 50 líneas; cantidad 1..99)
+-- ---------------------------------------------------------------------------
+insert into public.products (category_id, nombre, slug, precio, stock)
+select '10000000-0000-0000-0000-000000000001', 'Carrito ' || g, 'p-cart-' || g, 5, 10
+from generate_series(1, 51) as g;
+
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}', true);
+
+do $$
+declare n integer;
+begin
+  -- 50 líneas: 49 productos de prueba + el producto que usa la prueba de create_order
+  insert into public.cart_items (user_id, product_id, cantidad)
+  select '00000000-0000-0000-0000-0000000000c1', p.id, 2
+  from public.products p where p.slug in (select 'p-cart-' || g from generate_series(1, 49) g);
+  insert into public.cart_items (user_id, product_id, cantidad)
+  values ('00000000-0000-0000-0000-0000000000c1', '20000000-0000-0000-0000-000000000001', 1);
+  assert (select count(*) from public.cart_items) = 50, 'el cliente ve sus 50 líneas';
+
+  -- La línea 51 se rechaza
+  begin
+    insert into public.cart_items (user_id, product_id, cantidad)
+    select '00000000-0000-0000-0000-0000000000c1', p.id, 1 from public.products p where p.slug = 'p-cart-50';
+    raise exception 'la línea 51 debe rechazarse';
+  exception when check_violation then null; end;
+
+  -- Una línea que ya existe se puede actualizar aunque haya 50 (upsert)
+  insert into public.cart_items (user_id, product_id, cantidad)
+  values ('00000000-0000-0000-0000-0000000000c1', '20000000-0000-0000-0000-000000000001', 3)
+  on conflict (user_id, product_id) do update set cantidad = excluded.cantidad;
+  assert (select cantidad from public.cart_items where product_id = '20000000-0000-0000-0000-000000000001') = 3,
+    'el upsert actualiza una línea existente con el carrito lleno';
+
+  -- Cantidad inválida
+  begin
+    update public.cart_items set cantidad = 0 where product_id = '20000000-0000-0000-0000-000000000001';
+    raise exception 'cantidad 0 debe rechazarse';
+  exception when check_violation then null; end;
+  begin
+    update public.cart_items set cantidad = 100 where product_id = '20000000-0000-0000-0000-000000000001';
+    raise exception 'cantidad 100 debe rechazarse';
+  exception when check_violation then null; end;
+
+  -- No se puede crear una línea a nombre de otro
+  begin
+    insert into public.cart_items (user_id, product_id, cantidad)
+    select '00000000-0000-0000-0000-0000000000c2', p.id, 1 from public.products p where p.slug = 'p-cart-51';
+    raise exception 'no debe poder escribir en el carrito de otro';
+  exception when insufficient_privilege then null; end;
+end $$;
+
+reset role;
+
+-- El otro cliente no ve ni toca las líneas ajenas
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-0000000000c2","role":"authenticated"}', true);
+do $$
+declare n integer;
+begin
+  assert (select count(*) from public.cart_items) = 0, 'un cliente no ve el carrito de otro';
+  update public.cart_items set cantidad = 1;
+  get diagnostics n = row_count;
+  assert n = 0, 'un cliente no modifica el carrito de otro';
+  delete from public.cart_items;
+  get diagnostics n = row_count;
+  assert n = 0, 'un cliente no borra el carrito de otro';
+end $$;
+reset role;
+
+-- Un administrador tampoco lee carritos ajenos con la API (solo el servidor, con service_role)
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}', true);
+do $$
+begin
+  assert (select count(*) from public.cart_items) = 0, 'ni el admin ve carritos ajenos por la API';
+end $$;
+reset role;
+
+-- anon: nada
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon"}', true);
+do $$
+begin
+  begin
+    perform 1 from public.cart_items;
+    raise exception 'anon no debe leer carritos';
+  exception when insufficient_privilege then null; end;
+  begin
+    insert into public.cart_items (user_id, product_id, cantidad)
+    values ('00000000-0000-0000-0000-0000000000c1', '20000000-0000-0000-0000-000000000001', 1);
+    raise exception 'anon no debe escribir carritos';
+  exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+
+-- El servidor (service_role) sí las ve
+set local role service_role;
+do $$
+begin
+  assert (select count(*) from public.cart_items where user_id = '00000000-0000-0000-0000-0000000000c1') = 50,
+    'service_role lee el carrito para el checkout';
+end $$;
+reset role;
+
+-- ---------------------------------------------------------------------------
 -- create_order: pedido atómico con cuenta obligatoria y stock apartado
 -- ---------------------------------------------------------------------------
 -- Solo el servidor (service_role) la ejecuta; ni anon ni un usuario autenticado.
@@ -602,6 +711,8 @@ begin
   assert (select count(*) from public.order_items where order_id = o.o_id) = 1, 'crea sus líneas';
   assert (select stock_reservado from public.products where id = '20000000-0000-0000-0000-000000000001') = reservado_antes + 2,
     'aparta el stock';
+  assert (select count(*) from public.cart_items where user_id = '00000000-0000-0000-0000-0000000000c1') = 0,
+    'al crear el pedido se vacían las líneas del carrito de esa cuenta';
 
   -- Más de lo disponible: se rechaza y no aparta nada
   begin
@@ -615,6 +726,21 @@ begin
   end;
   assert (select stock_reservado from public.products where id = '20000000-0000-0000-0000-000000000001') = reservado_antes + 2,
     'un pedido rechazado no deja stock apartado';
+
+  -- Un pedido rechazado no vacía el carrito de nadie
+  insert into public.cart_items (user_id, product_id, cantidad)
+  values ('00000000-0000-0000-0000-0000000000c2', '20000000-0000-0000-0000-000000000001', 1);
+  begin
+    perform public.create_order('00000000-0000-0000-0000-0000000000c2', 'C2', 'c2@test.ec', '0999999992',
+      '{}'::jsonb,
+      '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10,"cantidad":100}]'::jsonb,
+      1000, 0, 0, 0, 1000, 48);
+    raise exception 'no debe vender más de lo disponible';
+  exception when raise_exception then
+    assert sqlerrm = 'stock_insuficiente', 'motivo: ' || sqlerrm;
+  end;
+  assert (select count(*) from public.cart_items where user_id = '00000000-0000-0000-0000-0000000000c2') = 1,
+    'un pedido rechazado no vacía el carrito';
 
   -- Producto inactivo: no se vende
   begin

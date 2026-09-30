@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { LayoutDashboard, LogOut, Menu, X, type LucideIcon } from "lucide-react";
 import { cerrarSesion } from "@/app/(admin)/admin/actions";
+import { clearCartOnSignOut } from "@/lib/cart-store";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -79,7 +80,7 @@ function SidebarContent({
 
       <div className="border-t border-accent px-3 py-3">
         <p className="truncate px-3 pb-2 text-sm text-accent-mid">{fullName ?? "Administrador"}</p>
-        <form action={cerrarSesion}>
+        <form action={cerrarSesion} onSubmit={clearCartOnSignOut}>
           <button
             type="submit"
             className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-sm font-semibold text-accent-mid transition-colors duration-150 hover:bg-accent/60 hover:text-bg"
