@@ -2,9 +2,9 @@ import Link from "next/link";
 import { cacheLife } from "next/cache";
 import { Suspense } from "react";
 import { FacebookIcon } from "@/components/store/facebook-icon";
-import { FACEBOOK_URL } from "@/config/site";
 import { Container } from "@/components/ui/container";
 import { getCategoryTree } from "@/lib/catalog";
+import { getPublicStoreInfo } from "@/lib/store-info";
 
 const linkClass =
   "inline-flex min-h-11 items-center text-accent-mid underline-offset-4 hover:text-bg hover:underline";
@@ -21,14 +21,34 @@ async function CurrentYear() {
 
 /** Solo enlaces a páginas que existen. Los demás (contacto, legales) se añaden cuando existan. */
 export async function Footer() {
-  const categories = await getCategoryTree();
+  const [categories, info] = await Promise.all([getCategoryTree(), getPublicStoreInfo()]);
+  const hasContact = Boolean(info.email || info.telefono || info.direccion);
 
   return (
     <footer className="on-dark mt-12 bg-accent-hover text-bg">
       <Container className="grid gap-8 py-12 sm:grid-cols-2 lg:grid-cols-3">
         <div>
-          <p className="text-lg font-semibold">Mi casa Store</p>
+          <p className="text-lg font-semibold">{info.nombre}</p>
           <p className="mt-2 max-w-xs text-sm text-accent-mid">Productos para el hogar.</p>
+          {hasContact && (
+            <address className="mt-3 text-sm not-italic text-accent-mid">
+              {info.direccion && <p>{info.direccion}</p>}
+              {info.telefono && (
+                <p>
+                  <a href={`tel:${info.telefono.replace(/[^+\d]/g, "")}`} className={linkClass}>
+                    {info.telefono}
+                  </a>
+                </p>
+              )}
+              {info.email && (
+                <p>
+                  <a href={`mailto:${info.email}`} className={linkClass}>
+                    {info.email}
+                  </a>
+                </p>
+              )}
+            </address>
+          )}
         </div>
 
         <nav aria-label="Tienda">
@@ -69,14 +89,14 @@ export async function Footer() {
             <Suspense fallback={null}>
               <CurrentYear />
             </Suspense>{" "}
-            Mi casa Store. Todos los derechos reservados.
+            {info.nombre}. Todos los derechos reservados.
           </p>
-          {FACEBOOK_URL && (
+          {info.facebook && (
             <a
-              href={FACEBOOK_URL}
+              href={info.facebook}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="Facebook de Mi casa Store"
+              aria-label={`Facebook de ${info.nombre}`}
               className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg hover:bg-accent hover:text-bg"
             >
               <FacebookIcon className="size-5" />

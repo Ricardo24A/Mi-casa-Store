@@ -1826,6 +1826,161 @@ begin
   reset role;
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- Configuración: vista pública mínima, permisos de la tabla y validaciones
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  admin_claims constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}';
+  aal1_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal1"}';
+  cust_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}';
+  good constant text := '{"banco":"Banco Uno","tipo":"ahorros","numero":"1234567890","titular":"Ana Prueba","identificacion":"1712345678"}';
+  cols text[];
+  n integer;
+  seen text;
+begin
+  -- ---- La vista pública trae SOLO nombre, contacto y redes -------------------------------
+  select array_agg(column_name::text order by column_name) into cols
+  from information_schema.columns where table_schema = 'public' and table_name = 'store_public_info';
+  assert cols = array['direccion', 'email_contacto', 'enlaces_redes', 'nombre_negocio', 'telefono'],
+    'la vista pública solo expone nombre, contacto y redes: ' || coalesce(array_to_string(cols, ','), 'nada');
+
+  update public.store_settings
+     set email_contacto = 'hola@test.ec', telefono = '0999999999', direccion = 'Calle 1',
+         enlaces_redes = '{"facebook":"https://facebook.com/tienda"}'::jsonb,
+         cuentas_bancarias = ('[' || good || ']')::jsonb;
+
+  -- Anónimo: lee la vista, no la tabla
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  select email_contacto into seen from public.store_public_info;
+  assert seen = 'hola@test.ec', 'el público lee el contacto por la vista';
+  begin
+    perform 1 from public.store_settings;
+    raise exception 'anon no debe leer store_settings';
+  exception when insufficient_privilege then null; end;
+  begin
+    perform cuentas_bancarias from public.store_public_info;
+    raise exception 'la vista pública no debe traer las cuentas bancarias';
+  exception when undefined_column then null; end;
+  reset role;
+
+  -- Cliente: la vista sí; la tabla, ninguna fila
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  assert (select count(*) from public.store_public_info) = 1, 'un cliente lee la vista';
+  assert (select count(*) from public.store_settings) = 0, 'un cliente no ve store_settings';
+  perform set_config('request.jwt.claims', aal1_claims, true);
+  assert (select count(*) from public.store_settings) = 0, 'un admin sin 2FA no ve store_settings';
+  perform set_config('request.jwt.claims', admin_claims, true);
+  assert (select count(*) from public.store_settings) = 1, 'el admin con 2FA ve store_settings';
+  reset role;
+
+  -- ---- Escritura: solo el admin con 2FA, y sin tocar columnas internas ---------------------
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  update public.store_settings set nombre_negocio = 'Intruso';
+  get diagnostics n = row_count;
+  assert n = 0, 'un cliente no edita la configuración';
+  perform set_config('request.jwt.claims', aal1_claims, true);
+  update public.store_settings set nombre_negocio = 'Intruso';
+  get diagnostics n = row_count;
+  assert n = 0, 'un admin sin 2FA no edita la configuración';
+  perform set_config('request.jwt.claims', admin_claims, true);
+  update public.store_settings set nombre_negocio = 'Mi casa Store', horas_limite_pago = 72;
+  get diagnostics n = row_count;
+  assert n = 1, 'el admin con 2FA edita';
+  begin
+    update public.store_settings set updated_at = now() - interval '1 year';
+    raise exception 'updated_at no es editable';
+  exception when insufficient_privilege then null; end;
+  begin
+    insert into public.store_settings (id) values (true);
+    raise exception 'no se crean filas de configuración';
+  exception when insufficient_privilege then null; end;
+  begin
+    delete from public.store_settings;
+    raise exception 'no se borra la configuración';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  -- ---- Límites ------------------------------------------------------------------------------
+  begin update public.store_settings set horas_limite_pago = 0; raise exception 'plazo 0';
+  exception when check_violation then null; end;
+  begin update public.store_settings set horas_limite_pago = 169; raise exception 'plazo de más de 168 horas';
+  exception when check_violation then null; end;
+  update public.store_settings set horas_limite_pago = 1;
+  update public.store_settings set horas_limite_pago = 168;
+  update public.store_settings set horas_limite_pago = 48;
+
+  begin update public.store_settings set descuento_transferencia_pct = 100; raise exception 'descuento del 100%%';
+  exception when check_violation then null; end;
+  begin update public.store_settings set descuento_transferencia_pct = -1; raise exception 'descuento negativo';
+  exception when check_violation then null; end;
+  update public.store_settings set descuento_transferencia_pct = 99.99;
+  update public.store_settings set descuento_transferencia_pct = 0;
+
+  update public.store_settings set costo_envio = null;   -- sin definir es válido
+  begin update public.store_settings set costo_envio = -1; raise exception 'envío negativo';
+  exception when check_violation then null; end;
+  update public.store_settings set costo_envio = 0;
+  begin update public.store_settings set envio_gratis_desde = 0; raise exception 'el umbral de envío gratis debe ser mayor que 0';
+  exception when check_violation then null; end;
+  update public.store_settings set envio_gratis_desde = 50;
+  update public.store_settings set envio_gratis_desde = null;
+  begin update public.store_settings set umbral_stock_bajo = -1; raise exception 'umbral negativo';
+  exception when check_violation then null; end;
+
+  -- ---- Cuentas bancarias: formato -----------------------------------------------------------
+  update public.store_settings set cuentas_bancarias = ('[' || good || ',' || good || ']')::jsonb;
+  update public.store_settings set cuentas_bancarias = '[]'::jsonb;
+  begin update public.store_settings set cuentas_bancarias = '{}'::jsonb; raise exception 'debe ser una lista';
+  exception when check_violation then null; end;
+  begin update public.store_settings set cuentas_bancarias = '["texto"]'::jsonb; raise exception 'un elemento que no es objeto';
+  exception when check_violation then null; end;
+  begin update public.store_settings set cuentas_bancarias = '[{"banco":"Banco"}]'::jsonb; raise exception 'faltan datos';
+  exception when check_violation then null; end;
+  begin update public.store_settings set cuentas_bancarias = replace('[' || good || ']', 'ahorros', 'vista')::jsonb; raise exception 'tipo de cuenta inválido';
+  exception when check_violation then null; end;
+  begin update public.store_settings set cuentas_bancarias = replace('[' || good || ']', '1234567890', '12ab567890')::jsonb; raise exception 'el número son solo dígitos';
+  exception when check_violation then null; end;
+  begin update public.store_settings set cuentas_bancarias = replace('[' || good || ']', '"identificacion"', '"extra":"x","identificacion"')::jsonb; raise exception 'claves desconocidas';
+  exception when check_violation then null; end;
+  begin update public.store_settings set cuentas_bancarias = replace('[' || good || ']', '"1234567890"', '1234567890')::jsonb; raise exception 'el número debe ser texto';
+  exception when check_violation then null; end;
+  begin
+    update public.store_settings set cuentas_bancarias =
+      (select jsonb_agg(good::jsonb) from generate_series(1, 11));
+    raise exception 'máximo 10 cuentas';
+  exception when check_violation then null; end;
+
+  -- ---- Redes: solo enlaces https ------------------------------------------------------------
+  update public.store_settings set enlaces_redes = '{"facebook":"https://facebook.com/x","instagram":"https://instagram.com/y"}'::jsonb;
+  update public.store_settings set enlaces_redes = '{}'::jsonb;
+  -- Largo del enlace: 255 caracteres después de https:// se aceptan y 256 se rechazan
+  update public.store_settings set enlaces_redes = jsonb_build_object('facebook', 'https://' || repeat('a', 255));
+  begin update public.store_settings set enlaces_redes = jsonb_build_object('facebook', 'https://' || repeat('a', 256)); raise exception 'enlace de 256 caracteres';
+  exception when check_violation then null; end;
+  begin update public.store_settings set enlaces_redes = '{"facebook":"https://abc"}'::jsonb; raise exception 'enlace demasiado corto';
+  exception when check_violation then null; end;
+  begin update public.store_settings set enlaces_redes = '{"facebook":"http://facebook.com/x"}'::jsonb; raise exception 'solo https';
+  exception when check_violation then null; end;
+  begin update public.store_settings set enlaces_redes = '{"facebook":"javascript:alert(1)"}'::jsonb; raise exception 'sin javascript:';
+  exception when check_violation then null; end;
+  begin update public.store_settings set enlaces_redes = '{"facebook":"https://a b.com"}'::jsonb; raise exception 'sin espacios';
+  exception when check_violation then null; end;
+  begin update public.store_settings set enlaces_redes = '{"facebook":5}'::jsonb; raise exception 'el enlace debe ser texto';
+  exception when check_violation then null; end;
+  begin update public.store_settings set enlaces_redes = '{"Face Book":"https://facebook.com/x"}'::jsonb; raise exception 'nombre de red inválido';
+  exception when check_violation then null; end;
+  begin update public.store_settings set enlaces_redes = '[]'::jsonb; raise exception 'debe ser un objeto';
+  exception when check_violation then null; end;
+
+  -- La configuración vuelve a un estado neutro para lo que sigue
+  update public.store_settings
+     set email_contacto = null, telefono = null, direccion = null, cuentas_bancarias = '[]'::jsonb, enlaces_redes = '{}'::jsonb;
+end $$;
+
 rollback;
 
 select 'RLS OK' as resultado;

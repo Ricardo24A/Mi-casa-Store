@@ -6,6 +6,7 @@ import { cartLineStatus, lineNotice } from "@/lib/cart-status";
 import { readCartLines } from "@/lib/cart-server";
 import { getProductsByIds } from "@/lib/catalog";
 import { computeOrderTotals } from "@/lib/order-totals";
+import { getCheckoutSettings } from "@/lib/store-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { fieldErrors } from "@/lib/validation/account";
@@ -81,19 +82,17 @@ export async function crearPedido(input: unknown): Promise<CheckoutResult> {
   }
 
   const admin = createAdminClient();
-  const { data: settings } = await admin
-    .from("store_settings")
-    .select("costo_envio, envio_gratis_desde, descuento_transferencia_pct, horas_limite_pago")
-    .maybeSingle();
+  // Reglas de cobro de Configuración, leídas aquí en el servidor en cada pedido.
+  const settings = await getCheckoutSettings();
   if (!settings) return { ok: false, error: GENERIC_ERROR };
+  // Sin cuentas bancarias el cliente no sabría dónde transferir: no se crea el pedido ni se aparta stock.
+  if (settings.cuentas_bancarias.length === 0) {
+    return { ok: false, error: "Por ahora no podemos recibir pedidos en línea. Inténtalo más tarde." };
+  }
 
   const totals = computeOrderTotals(
     lines.map((l) => ({ precio: l.product.precio, precioFinal: l.product.precioFinal, cantidad: l.cantidad })),
-    {
-      costo_envio: Number(settings.costo_envio),
-      envio_gratis_desde: settings.envio_gratis_desde === null ? null : Number(settings.envio_gratis_desde),
-      descuento_transferencia_pct: Number(settings.descuento_transferencia_pct),
-    },
+    settings,
   );
 
   // 4) Dirección de envío, ya con el stock comprobado para no guardar una dirección si el pedido
@@ -175,7 +174,7 @@ export async function crearPedido(input: unknown): Promise<CheckoutResult> {
     p_descuento_transferencia: totals.descuento_transferencia,
     p_envio: totals.envio,
     p_total: totals.total,
-    p_horas_limite: Number(settings.horas_limite_pago),
+    p_horas_limite: settings.horas_limite_pago,
   });
 
   if (error) {

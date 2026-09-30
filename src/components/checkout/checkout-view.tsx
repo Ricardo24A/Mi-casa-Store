@@ -14,7 +14,7 @@ import { PROVINCIAS } from "@/config/ecuador";
 import { resetCartAfterOrder, useCartItems, useCartReady } from "@/lib/cart-store";
 import { formatUsd } from "@/lib/format";
 import { blocksCheckout, cartLineStatus } from "@/lib/cart-status";
-import { computeOrderTotals, type TotalsSettings } from "@/lib/order-totals";
+import { computeOrderTotals, shippingToArrange, type TotalsSettings } from "@/lib/order-totals";
 import type { StoreProduct } from "@/types/store";
 
 export interface SavedAddress {
@@ -37,11 +37,14 @@ export function CheckoutView({
   phone,
   addresses,
   settings,
+  canPay,
 }: {
   fullName: string;
   phone: string;
   addresses: SavedAddress[];
   settings: TotalsSettings;
+  /** El negocio ya registró al menos una cuenta para recibir la transferencia. */
+  canPay: boolean;
 }) {
   const router = useRouter();
   const items = useCartItems();
@@ -220,9 +223,14 @@ export function CheckoutView({
               Revisar mi carrito
             </Link>
           )}
-          <button type="submit" disabled={pending || unavailable} className={buttonClass("primary", "lg", "w-full sm:w-auto")}>
+          <button type="submit" disabled={pending || unavailable || !canPay} className={buttonClass("primary", "lg", "w-full sm:w-auto")}>
             {pending ? "Creando pedido…" : "Confirmar pedido"}
           </button>
+          {!canPay && (
+            <p role="alert" className="text-sm text-sale-ink">
+              Por ahora no podemos recibir pedidos en línea. Inténtalo más tarde.
+            </p>
+          )}
           {unavailable && (
             <p className="text-sm text-sale-ink">
               Hay productos sin stock suficiente.{" "}
@@ -258,7 +266,7 @@ export function CheckoutView({
           {totals.descuento_transferencia > 0 && (
             <Row label="Descuento por transferencia" value={`−${formatUsd(totals.descuento_transferencia)}`} />
           )}
-          <Row label="Envío" value={totals.envio === 0 ? "Gratis" : formatUsd(totals.envio)} />
+          <Row label="Envío" value={shippingToArrange(settings) ? "A coordinar" : totals.envio === 0 ? "Gratis" : formatUsd(totals.envio)} />
           <div className="flex items-baseline justify-between border-t border-line pt-3">
             <dt className="font-semibold text-ink">Total</dt>
             <dd className="text-lg font-semibold text-ink">{formatUsd(totals.total)}</dd>

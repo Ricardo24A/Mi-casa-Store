@@ -9,7 +9,7 @@ import { Container } from "@/components/ui/container";
 import { requireCustomer } from "@/lib/auth";
 import { formatUsd } from "@/lib/format";
 import { ORDER_STATUS_LABEL } from "@/lib/order-status";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { getCheckoutSettings } from "@/lib/store-settings";
 import { createClient } from "@/lib/supabase/server";
 import type { ProofSummary } from "@/lib/proof-rules";
 import type { OrderStatus } from "@/types/database";
@@ -27,14 +27,6 @@ const deadlineFormat = new Intl.DateTimeFormat("es-EC", {
   timeZone: "America/Guayaquil",
 });
 
-interface BankAccount {
-  banco: string;
-  tipo: "ahorros" | "corriente";
-  numero: string;
-  titular: string;
-  identificacion: string;
-}
-
 async function ConfirmationContent({ params }: { params: PageProps<"/confirmacion/[referencia]">["params"] }) {
   const { userId } = await requireCustomer();
   const referencia = referenciaSchema.safeParse((await params).referencia);
@@ -51,11 +43,7 @@ async function ConfirmationContent({ params }: { params: PageProps<"/confirmacio
   if (!order) notFound();
 
   // Las cuentas bancarias solo las lee el servidor (el comprador las ve por ser dueño del pedido).
-  const { data: settings } = await createAdminClient()
-    .from("store_settings")
-    .select("cuentas_bancarias")
-    .maybeSingle();
-  const accounts = (settings?.cuentas_bancarias ?? []) as BankAccount[];
+  const accounts = (await getCheckoutSettings())?.cuentas_bancarias ?? [];
 
   return (
     <Container className="py-10">
@@ -82,7 +70,7 @@ async function ConfirmationContent({ params }: { params: PageProps<"/confirmacio
 
         <h2 className="mb-3 mt-8 text-xl font-semibold text-ink">Cuentas para la transferencia</h2>
         {accounts.length === 0 ? (
-          <p className="text-sm text-ink-soft">Las cuentas bancarias se mostrarán aquí cuando el negocio las registre.</p>
+          <p className="text-sm text-ink-soft">Todavía no hay cuentas registradas para transferir. Vuelve a revisar más tarde.</p>
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2">
             {accounts.map((a) => (

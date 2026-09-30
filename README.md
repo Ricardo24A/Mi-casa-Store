@@ -47,6 +47,7 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 14. `migrations/20260929000014_create_order_category_active.sql`: `create_order` rechaza productos de una categoría desactivada (aunque el servidor lea con `service_role`).
 15. `migrations/20260929000015_product_images_limit.sql`: el bucket `product-images` admite hasta 4 MB.
 16. `migrations/20260929000016_discounts_guards.sql`: porcentaje menor que 100, el destino de un descuento debe existir (producto o categoría) y se borra el descuento cuando se borra su destino.
+17. `migrations/20260929000017_store_settings_admin.sql`: Configuración. Plazo de pago de 1 a 168 horas, descuento por transferencia de 0 a menos de 100, costo de envío opcional (`null` = "A coordinar"), cuentas bancarias y redes validadas en la base, permisos de `store_settings` solo para el admin con 2FA (columnas editables, sin insert ni delete) y la vista pública `store_public_info` con solo nombre, contacto y redes.
 17. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { computeOrderTotals } from "./order-totals.ts";
+import { computeOrderTotals, shippingToArrange } from "./order-totals.ts";
 
 const noExtras = { costo_envio: 0, envio_gratis_desde: null, descuento_transferencia_pct: 0 };
 
@@ -48,4 +48,13 @@ test("siempre cumple la regla de la base: total = subtotal - descuento - transfe
   const t = computeOrderTotals(lines, settings);
   const cents = (n: number) => Math.round(n * 100);
   assert.equal(cents(t.total), cents(t.subtotal) - cents(t.descuento) - cents(t.descuento_transferencia) + cents(t.envio));
+});
+
+test("sin costo de envío definido no se suma nada y se marca como por coordinar", () => {
+  const settings = { costo_envio: null, envio_gratis_desde: null, descuento_transferencia_pct: 0 };
+  const t = computeOrderTotals([{ precio: 20, precioFinal: 20, cantidad: 1 }], settings);
+  assert.equal(t.envio, 0);
+  assert.equal(t.total, 20);
+  assert.equal(shippingToArrange(settings), true);
+  assert.equal(shippingToArrange({ ...settings, costo_envio: 0 }), false, "0 es envío gratis decidido a propósito");
 });

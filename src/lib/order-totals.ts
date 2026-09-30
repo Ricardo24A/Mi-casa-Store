@@ -9,7 +9,8 @@ export interface TotalsLine {
 }
 
 export interface TotalsSettings {
-  costo_envio: number;
+  /** null = el negocio aún no definió el costo: no se suma y el checkout muestra "A coordinar". */
+  costo_envio: number | null;
   /** null = sin envío gratis. */
   envio_gratis_desde: number | null;
   /** 0 = sin descuento por transferencia. */
@@ -32,7 +33,8 @@ export interface OrderTotals {
  * - subtotal: precios de lista.
  * - descuento: rebaja de los descuentos de producto (lista menos precio final).
  * - descuento_transferencia: % sobre lo que queda tras el descuento, redondeado al centavo.
- * - envío: gratis si hay umbral y lo que se paga por los productos lo alcanza.
+ * - envío: gratis si hay umbral y lo que se paga por los productos lo alcanza; sin costo definido
+ *   (null) no se suma nada y se coordina con el cliente (ver `shippingToArrange`).
  */
 export function computeOrderTotals(lines: readonly TotalsLine[], settings: TotalsSettings): OrderTotals {
   let listCents = 0;
@@ -45,7 +47,7 @@ export function computeOrderTotals(lines: readonly TotalsLine[], settings: Total
   const transferCents = Math.round((finalCents * settings.descuento_transferencia_pct) / 100);
   const freeShipping =
     settings.envio_gratis_desde !== null && finalCents >= toCents(settings.envio_gratis_desde);
-  const shippingCents = freeShipping ? 0 : toCents(settings.costo_envio);
+  const shippingCents = freeShipping || settings.costo_envio === null ? 0 : toCents(settings.costo_envio);
 
   return {
     subtotal: fromCents(listCents),
@@ -54,4 +56,9 @@ export function computeOrderTotals(lines: readonly TotalsLine[], settings: Total
     envio: fromCents(shippingCents),
     total: fromCents(finalCents - transferCents + shippingCents),
   };
+}
+
+/** El costo de envío no está definido: no se cobra en el pedido y se muestra "A coordinar". */
+export function shippingToArrange(settings: TotalsSettings): boolean {
+  return settings.costo_envio === null;
 }

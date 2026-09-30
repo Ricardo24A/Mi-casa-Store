@@ -108,6 +108,7 @@ Las plantillas ya existen en `prototipos/cliente/src/data/index.ts` (`presetProd
 - **Pedidos**: listado, detalle y estados: pendiente de pago, comprobante recibido, pagado, enviado, entregado, rechazado, cancelado o vencido.
 - **Revisión de comprobantes**: ver la imagen o PDF subido junto al monto y la referencia del pedido, y aprobar o rechazar (con motivo que se notifica al cliente).
 - Configuración: datos del negocio, cuentas bancarias para transferencia, costo y regla de envío, porcentaje de descuento por transferencia, tiempo límite para pagar.
+  Reglas: todo vacío es "sin definir" y la tienda funciona sin ello (nada de cifras inventadas). Costo de envío vacío = "A coordinar" (0 = gratis a propósito); "envío gratis desde" exige costo de envío. Plazo de pago de 1 a 168 horas (aplica a pedidos nuevos). Descuento por transferencia de 0 a menos de 100. Sin cuentas bancarias el checkout no deja pagar ni crea pedidos. Las cuentas y reglas de cobro no son públicas: las lee solo el servidor (`getCheckoutSettings`); lo único público es nombre, contacto y Facebook del pie por la vista `store_public_info` (`getPublicStoreInfo`, etiqueta de caché `tienda`). Las URLs de redes deben ser https.
 - Panel resumen: ventas recientes, pedidos por revisar, productos con poco stock.
 
 ### Prototipo del dashboard (Lovable): qué tomar y qué cambiar

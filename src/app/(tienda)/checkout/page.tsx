@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { CheckoutView, type SavedAddress } from "@/components/checkout/checkout-view";
 import { Container } from "@/components/ui/container";
 import { requireCustomer } from "@/lib/auth";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { getCheckoutSettings } from "@/lib/store-settings";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
@@ -16,7 +16,7 @@ async function CheckoutContent() {
   const { userId, fullName } = await requireCustomer("/checkout");
 
   const supabase = await createClient();
-  const [{ data: profile }, { data: addresses }, { data: settings }] = await Promise.all([
+  const [{ data: profile }, { data: addresses }, settings] = await Promise.all([
     supabase.from("profiles").select("phone").eq("id", userId).maybeSingle(),
     supabase
       .from("customer_addresses")
@@ -26,11 +26,8 @@ async function CheckoutContent() {
       .order("created_at")
       .returns<SavedAddress[]>(),
     // Los ajustes solo los lee el admin por RLS; el servidor entrega al comprador únicamente
-    // los números que necesita para ver su total.
-    createAdminClient()
-      .from("store_settings")
-      .select("costo_envio, envio_gratis_desde, descuento_transferencia_pct")
-      .maybeSingle(),
+    // los números que necesita para ver su total (y si ya hay cuentas para pagar).
+    getCheckoutSettings(),
   ]);
 
   return (
@@ -41,10 +38,11 @@ async function CheckoutContent() {
         phone={profile?.phone ?? ""}
         addresses={addresses ?? []}
         settings={{
-          costo_envio: Number(settings?.costo_envio ?? 0),
-          envio_gratis_desde: settings?.envio_gratis_desde == null ? null : Number(settings.envio_gratis_desde),
-          descuento_transferencia_pct: Number(settings?.descuento_transferencia_pct ?? 0),
+          costo_envio: settings?.costo_envio ?? null,
+          envio_gratis_desde: settings?.envio_gratis_desde ?? null,
+          descuento_transferencia_pct: settings?.descuento_transferencia_pct ?? 0,
         }}
+        canPay={(settings?.cuentas_bancarias.length ?? 0) > 0}
       />
     </Container>
   );
