@@ -223,6 +223,11 @@ export function CheckoutView({
               Revisar mi carrito
             </Link>
           )}
+          {result?.code === "cuenta" && (
+            <Link href="/cuenta" className="inline-flex min-h-11 items-center text-sm font-semibold text-accent hover:underline">
+              Ver mis pedidos
+            </Link>
+          )}
           <button type="submit" disabled={pending || unavailable || !canPay} className={buttonClass("primary", "lg", "w-full sm:w-auto")}>
             {pending ? "Creando pedido…" : "Confirmar pedido"}
           </button>

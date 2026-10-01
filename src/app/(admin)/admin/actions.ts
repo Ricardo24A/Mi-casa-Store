@@ -3,6 +3,8 @@
 import { redirect } from "next/navigation";
 import { ADMIN_HOME, ADMIN_LOGIN } from "@/lib/admin-access";
 import { getAdminSession, guardAdminArea } from "@/lib/auth";
+import { checkRateLimits } from "@/lib/rate-limit";
+import { rateLimitMessage } from "@/lib/rate-limit-core";
 import { createClient } from "@/lib/supabase/server";
 import { totpVerifySchema } from "@/lib/validation/admin-auth";
 
@@ -65,6 +67,9 @@ export async function confirmarEnrolamiento(input: { factorId: string; code: str
 
   const parsed = totpVerifySchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Escribe los 6 dígitos que muestra la app." };
+  // Mismo contador que verificarCodigo (por usuario, falla abierto).
+  const limited = rateLimitMessage(await checkRateLimits([{ rule: "codigo2fa", identity: session.userId }], "open"));
+  if (limited) return { ok: false, error: limited };
 
   const supabase = await createClient();
   const { error } = await supabase.auth.mfa.challengeAndVerify(parsed.data);
@@ -74,13 +79,17 @@ export async function confirmarEnrolamiento(input: { factorId: string; code: str
 
 /** Pide el código de un factor ya verificado. Con éxito la sesión pasa a aal2. */
 export async function verificarCodigo(_prev: FormState, formData: FormData): Promise<FormState> {
-  await guardAdminArea("verificar");
+  const session = await guardAdminArea("verificar");
 
   const parsed = totpVerifySchema.safeParse({
     factorId: formData.get("factorId"),
     code: formData.get("code"),
   });
   if (!parsed.success) return { error: "Escribe los 6 dígitos que muestra la app." };
+  // Por usuario. Falla abierto: Supabase Auth también limita la verificación, y bloquear aquí dejaría
+  // al dueño fuera del panel si la función de límite fallara.
+  const limited = rateLimitMessage(await checkRateLimits([{ rule: "codigo2fa", identity: session.userId }], "open"));
+  if (limited) return { error: limited };
 
   const supabase = await createClient();
   const { error } = await supabase.auth.mfa.challengeAndVerify(parsed.data);

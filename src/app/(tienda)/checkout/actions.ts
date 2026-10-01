@@ -3,9 +3,12 @@
 import { CHECKOUT_REQUIRES_ACCOUNT } from "@/config/site";
 import { getAdminSession } from "@/lib/auth";
 import { cartLineStatus, lineNotice } from "@/lib/cart-status";
+import { CHECKOUT_GENERIC_ERROR, checkoutErrorFromDb, type CheckoutErrorCode } from "@/lib/checkout-errors";
 import { readCartLines } from "@/lib/cart-server";
 import { getProductsByIds } from "@/lib/catalog";
 import { computeOrderTotals } from "@/lib/order-totals";
+import { checkRateLimits } from "@/lib/rate-limit";
+import { rateLimitMessage } from "@/lib/rate-limit-core";
 import { getCheckoutSettings } from "@/lib/store-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -17,12 +20,15 @@ export type CheckoutResult =
   | {
       ok: false;
       error: string;
-      /** `login`: no hay sesión de cliente; la pantalla lleva al login con next=/checkout. */
-      code?: "login" | "stock";
+      /**
+       * `login`: no hay sesión de cliente; la pantalla lleva al login con next=/checkout.
+       * `stock`: hay que revisar el carrito. `cuenta`: hay que ver los pedidos en Mi cuenta.
+       */
+      code?: "login" | CheckoutErrorCode;
       fieldErrors?: Record<string, string>;
     };
 
-const GENERIC_ERROR = "No pudimos crear tu pedido. Inténtalo de nuevo en un momento.";
+const GENERIC_ERROR = CHECKOUT_GENERIC_ERROR;
 
 /**
  * Crea el pedido. La autorización se decide AQUÍ, en el servidor: ocultar el botón no basta.
@@ -61,6 +67,11 @@ export async function crearPedido(input: unknown): Promise<CheckoutResult> {
   if (!user?.email || user.id !== session.userId) {
     return { ok: false, code: "login", error: "Tu sesión expiró. Inicia sesión de nuevo." };
   }
+
+  // Límite de intentos por usuario. Falla cerrado: sin límite se podría apartar stock en bucle
+  // (la base además limita a 3 pedidos pendientes por cuenta).
+  const limited = rateLimitMessage(await checkRateLimits([{ rule: "pedido", identity: user.id }], "closed"));
+  if (limited) return { ok: false, error: limited };
 
   // 3) El carrito de la cuenta (base de datos) y sus precios y stock reales
   const items = await readCartLines(supabase, user.id);
@@ -157,6 +168,8 @@ export async function crearPedido(input: unknown): Promise<CheckoutResult> {
   }
 
   // 6) Pedido atómico. Nombre y precio de cada línea salen de la base, congelados al comprar.
+  //    create_order bloquea el carrito y exige que estas líneas sean las suyas: un segundo envío
+  //    simultáneo encuentra el carrito vacío y no crea otro pedido.
   const { data, error } = await admin.rpc("create_order", {
     p_user_id: user.id,
     p_nombre: nombre,
@@ -177,12 +190,7 @@ export async function crearPedido(input: unknown): Promise<CheckoutResult> {
     p_horas_limite: settings.horas_limite_pago,
   });
 
-  if (error) {
-    if (error.message === "stock_insuficiente") {
-      return { ok: false, code: "stock", error: "Alguien compró antes que tú y ya no hay stock suficiente. Revisa tu carrito." };
-    }
-    return { ok: false, error: GENERIC_ERROR };
-  }
+  if (error) return { ok: false, ...checkoutErrorFromDb(error.message) };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.o_referencia) return { ok: false, error: GENERIC_ERROR };
 

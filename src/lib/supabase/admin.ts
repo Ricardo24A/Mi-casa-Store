@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
-import { getServiceRoleKey, getSupabaseEnv } from "@/lib/env";
+import { getSupabaseEnv } from "@/lib/env";
+import { getServiceRoleKey } from "@/lib/server-env";
 
 /**
  * Cliente con la clave service_role: SE SALTA RLS. Úsalo solo en servidor y solo para lo que

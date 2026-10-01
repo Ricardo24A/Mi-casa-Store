@@ -4,6 +4,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getAdminSession } from "@/lib/auth";
+import { checkRateLimits } from "@/lib/rate-limit";
+import { rateLimitMessage } from "@/lib/rate-limit-core";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { PROOF_MAX_BYTES, checkProofBytes } from "@/lib/validation/files";
@@ -47,6 +49,10 @@ export async function subirComprobante(referencia: unknown, formData: FormData):
   const ref = referenciaSchema.safeParse(referencia);
   const file = formData.get("archivo");
   if (!ref.success || !(file instanceof File)) return { ok: false, error: "Elige el archivo de tu comprobante." };
+  // Por usuario. Falla abierto: la base ya limita a 3 comprobantes por pedido, y bloquear aquí dejaría
+  // a un cliente sin poder pagar si la función de límite fallara.
+  const limited = rateLimitMessage(await checkRateLimits([{ rule: "comprobante", identity: session.userId }], "open"));
+  if (limited) return { ok: false, error: limited };
   // Antes de leerlo en memoria.
   if (file.size > PROOF_MAX_BYTES) return { ok: false, error: "El archivo pesa más de 4 MB." };
 

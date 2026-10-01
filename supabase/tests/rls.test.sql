@@ -720,7 +720,11 @@ begin
     assert sqlerrm = 'cuenta_requerida', 'motivo del rechazo sin usuario: ' || sqlerrm;
   end;
 
-  -- Pedido válido: guarda el usuario, aparta el stock y crea las líneas
+  -- Pedido válido: guarda el usuario, aparta el stock y crea las líneas. Desde la migración 21 las
+  -- líneas deben ser exactamente las del carrito de la cuenta.
+  delete from public.cart_items where user_id = '00000000-0000-0000-0000-0000000000c1';
+  insert into public.cart_items (user_id, product_id, cantidad)
+  values ('00000000-0000-0000-0000-0000000000c1', '20000000-0000-0000-0000-000000000001', 2);
   select * into o from public.create_order('00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991',
     '{"ciudad":"Quito"}'::jsonb, item::jsonb, 20, 0, 1, 3, 22, 48);
   assert o.o_referencia ~ '^MC-[A-Z2-9]{8}$', 'el pedido recibe su referencia';
@@ -734,11 +738,13 @@ begin
     'al crear el pedido se vacían las líneas del carrito de esa cuenta';
 
   -- Más de lo disponible: se rechaza y no aparta nada
+  insert into public.cart_items (user_id, product_id, cantidad)
+  values ('00000000-0000-0000-0000-0000000000c1', '20000000-0000-0000-0000-000000000001', 99);
   begin
     perform public.create_order('00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991',
       '{}'::jsonb,
-      '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10,"cantidad":100}]'::jsonb,
-      1000, 0, 0, 0, 1000, 48);
+      '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10,"cantidad":99}]'::jsonb,
+      990, 0, 0, 0, 990, 48);
     raise exception 'no debe vender más de lo disponible';
   exception when raise_exception then
     assert sqlerrm = 'stock_insuficiente', 'motivo del rechazo por stock: ' || sqlerrm;
@@ -747,13 +753,14 @@ begin
     'un pedido rechazado no deja stock apartado';
 
   -- Un pedido rechazado no vacía el carrito de nadie
+  delete from public.cart_items where user_id = '00000000-0000-0000-0000-0000000000c2';
   insert into public.cart_items (user_id, product_id, cantidad)
-  values ('00000000-0000-0000-0000-0000000000c2', '20000000-0000-0000-0000-000000000001', 1);
+  values ('00000000-0000-0000-0000-0000000000c2', '20000000-0000-0000-0000-000000000001', 99);
   begin
     perform public.create_order('00000000-0000-0000-0000-0000000000c2', 'C2', 'c2@test.ec', '0999999992',
       '{}'::jsonb,
-      '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10,"cantidad":100}]'::jsonb,
-      1000, 0, 0, 0, 1000, 48);
+      '[{"product_id":"20000000-0000-0000-0000-000000000001","nombre":"Activo","precio_unitario":10,"cantidad":99}]'::jsonb,
+      990, 0, 0, 0, 990, 48);
     raise exception 'no debe vender más de lo disponible';
   exception when raise_exception then
     assert sqlerrm = 'stock_insuficiente', 'motivo: ' || sqlerrm;
@@ -762,6 +769,9 @@ begin
     'un pedido rechazado no vacía el carrito';
 
   -- Producto inactivo: no se vende
+  delete from public.cart_items where user_id = '00000000-0000-0000-0000-0000000000c1';
+  insert into public.cart_items (user_id, product_id, cantidad)
+  values ('00000000-0000-0000-0000-0000000000c1', '20000000-0000-0000-0000-000000000002', 1);
   begin
     perform public.create_order('00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991',
       '{}'::jsonb,
@@ -773,11 +783,15 @@ begin
   end;
 
   -- El total debe cuadrar (constraint de la tabla)
+  delete from public.cart_items where user_id = '00000000-0000-0000-0000-0000000000c1';
+  insert into public.cart_items (user_id, product_id, cantidad)
+  values ('00000000-0000-0000-0000-0000000000c1', '20000000-0000-0000-0000-000000000001', 2);
   begin
     perform public.create_order('00000000-0000-0000-0000-0000000000c1', 'C1', 'c1@test.ec', '0999999991',
       '{}'::jsonb, item::jsonb, 20, 0, 0, 0, 99, 48);
     raise exception 'un total que no cuadra debe rechazarse';
   exception when check_violation then null; end;
+  delete from public.cart_items where user_id = '00000000-0000-0000-0000-0000000000c1';
 end $$;
 reset role;
 
@@ -1103,13 +1117,21 @@ reset role;
 insert into public.products (id, category_id, nombre, slug, precio, stock)
 values ('20000000-0000-0000-0000-0000000000f9', '10000000-0000-0000-0000-000000000001', 'Flujo', 'p-flujo', 10, 100);
 
--- Crea un pedido (con reserva) para un usuario, y opcionalmente con su comprobante en revisión.
-create function pg_temp.mk_order(p_user uuid, p_qty integer, p_with_proof boolean, p_tag text)
+-- Crea un pedido (con reserva) y, opcionalmente, su comprobante en revisión. Cada pedido es de un
+-- usuario nuevo: así el tope de 3 pendientes por cuenta (migración 21) no interfiere con estas pruebas.
+-- El dueño se consulta con `(select user_id from public.orders where id = ...)`. Como create_order exige
+-- que las líneas sean las del carrito, primero se llena el carrito de ese usuario.
+create function pg_temp.mk_order(p_qty integer, p_with_proof boolean, p_tag text)
 returns uuid
 language plpgsql
 as $$
-declare v uuid;
+declare
+  v uuid;
+  p_user uuid := gen_random_uuid();
 begin
+  insert into auth.users (id) values (p_user);
+  insert into public.cart_items (user_id, product_id, cantidad)
+  values (p_user, '20000000-0000-0000-0000-0000000000f9', p_qty);
   set local role service_role;
   select o_id into v from public.create_order(p_user, 'N', 'n@test.ec', '0999999999', '{}'::jsonb,
     jsonb_build_array(jsonb_build_object('product_id', '20000000-0000-0000-0000-0000000000f9',
@@ -1131,9 +1153,9 @@ declare
   ex1 uuid; ex2 uuid; ex3 uuid;
   rs integer; n integer;
 begin
-  ex1 := pg_temp.mk_order(c1, 2, false, 'ex1');  -- pendiente y vencido
-  ex2 := pg_temp.mk_order(c1, 1, false, 'ex2');  -- pendiente y vigente
-  ex3 := pg_temp.mk_order(c1, 1, true,  'ex3');  -- con comprobante en revisión, plazo vencido
+  ex1 := pg_temp.mk_order(2, false, 'ex1');  -- pendiente y vencido
+  ex2 := pg_temp.mk_order(1, false, 'ex2');  -- pendiente y vigente
+  ex3 := pg_temp.mk_order(1, true,  'ex3');  -- con comprobante en revisión, plazo vencido
   update public.orders set vence_en = now() - interval '1 minute' where id in (ex1, ex3);
   select stock_reservado into rs from public.products where id = pid;
   assert rs = 4, 'antes de vencer hay 4 unidades reservadas';
@@ -1195,7 +1217,7 @@ begin
   -- Un pedido vencido no admite comprobante
   set local role service_role;
   begin
-    perform public.submit_payment_proof(c1, ex1, 'flujo/tarde.png', repeat('7', 64));
+    perform public.submit_payment_proof((select user_id from public.orders where id = ex1), ex1, 'flujo/tarde.png', repeat('7', 64));
     raise exception 'un pedido vencido no admite comprobante';
   exception when raise_exception then
     assert sqlerrm = 'estado_invalido', 'comprobante en vencido: ' || sqlerrm;
@@ -1220,7 +1242,7 @@ begin
   select horas_limite_pago into horas from public.store_settings;
 
   -- ================= Aprobar =================
-  oa := pg_temp.mk_order(c1, 3, true, 'A');
+  oa := pg_temp.mk_order(3, true, 'A');
   select id into pa from public.payment_proofs where order_id = oa;
   select stock, stock_reservado into st0, rs0 from public.products where id = pid;
 
@@ -1272,10 +1294,10 @@ begin
   assert st = st0 - 3 and rs = rs0 - 3, 'la segunda aprobación no descuenta otra vez';
 
   -- Aprobar un comprobante que el cliente ya reemplazó
-  ob := pg_temp.mk_order(c1, 1, true, 'B1');
+  ob := pg_temp.mk_order(1, true, 'B1');
   select id into pb1 from public.payment_proofs where order_id = ob;
   set local role service_role;
-  perform public.submit_payment_proof(c1, ob, 'flujo/B2.png', md5('B2') || md5('B2x'));
+  perform public.submit_payment_proof((select user_id from public.orders where id = ob), ob, 'flujo/B2.png', md5('B2') || md5('B2x'));
   reset role;
   select id into pb2 from public.payment_proofs where order_id = ob and estado = 'en_revision';
   set local role authenticated;
@@ -1293,7 +1315,7 @@ begin
   assert (select estado from public.orders where id = ob) = 'pagado', 'se aprueba el vigente';
 
   -- Un pedido pendiente (sin comprobante) no se aprueba
-  oc := pg_temp.mk_order(c1, 1, false, 'C');
+  oc := pg_temp.mk_order(1, false, 'C');
   set local role authenticated;
   perform set_config('request.jwt.claims', admin_claims, true);
   begin
@@ -1303,7 +1325,7 @@ begin
   reset role;
 
   -- ================= Rechazar el comprobante (opción A) =================
-  od := pg_temp.mk_order(c1, 2, true, 'D1');
+  od := pg_temp.mk_order(2, true, 'D1');
   select id into pd from public.payment_proofs where order_id = od;
   select stock_reservado into rs0 from public.products where id = pid;
   set local role authenticated;
@@ -1339,7 +1361,7 @@ begin
 
   -- El cliente sube uno nuevo y el viejo ya no se puede tocar
   set local role service_role;
-  perform public.submit_payment_proof(c1, od, 'flujo/D2.png', md5('D2') || md5('D2x'));
+  perform public.submit_payment_proof((select user_id from public.orders where id = od), od, 'flujo/D2.png', md5('D2') || md5('D2x'));
   reset role;
   select id into pd2 from public.payment_proofs where order_id = od and estado = 'en_revision';
   set local role authenticated;
@@ -1353,7 +1375,7 @@ begin
 
   -- Acotado: como mucho 3 comprobantes por pedido, así que el plazo nuevo solo se da 3 veces
   set local role service_role;
-  perform public.submit_payment_proof(c1, od, 'flujo/D3.png', md5('D3') || md5('D3x'));
+  perform public.submit_payment_proof((select user_id from public.orders where id = od), od, 'flujo/D3.png', md5('D3') || md5('D3x'));
   reset role;
   set local role authenticated;
   perform set_config('request.jwt.claims', admin_claims, true);
@@ -1362,14 +1384,14 @@ begin
   assert (select count(*) from public.payment_proofs where order_id = od) = 3, 'tres comprobantes en el historial';
   set local role service_role;
   begin
-    perform public.submit_payment_proof(c1, od, 'flujo/D4.png', md5('D4') || md5('D4x'));
+    perform public.submit_payment_proof((select user_id from public.orders where id = od), od, 'flujo/D4.png', md5('D4') || md5('D4x'));
     raise exception 'el cuarto comprobante debe rechazarse';
   exception when raise_exception then assert sqlerrm = 'limite_comprobantes', 'cuarto: ' || sqlerrm; end;
   reset role;
   assert (select reserva_activa from public.orders where id = od), 'la reserva sigue hasta que venza o se cancele';
 
   -- ================= Rechazar el pedido definitivamente =================
-  oe := pg_temp.mk_order(c2, 2, true, 'E');
+  oe := pg_temp.mk_order(2, true, 'E');
   select id into pe from public.payment_proofs where order_id = oe;
   select stock_reservado into rs0 from public.products where id = pid;
   set local role authenticated;
@@ -1392,8 +1414,8 @@ begin
   assert rs = rs0 - 2, 'no libera dos veces';
 
   -- ================= Cancelar =================
-  ofx := pg_temp.mk_order(c1, 4, false, 'F');   -- pendiente de pago
-  og  := pg_temp.mk_order(c1, 1, true,  'G');   -- con comprobante en revisión
+  ofx := pg_temp.mk_order(4, false, 'F');   -- pendiente de pago
+  og  := pg_temp.mk_order(1, true,  'G');   -- con comprobante en revisión
   select stock_reservado into rs0 from public.products where id = pid;
   set local role authenticated;
   perform set_config('request.jwt.claims', admin_claims, true);
@@ -1422,8 +1444,8 @@ begin
   assert st = st0 - 3 - 1, 'cancelar y rechazar no tocan el stock definitivo (solo las aprobaciones descuentan)';
 
   -- ================= Cruces entre vencer y cancelar =================
-  oh := pg_temp.mk_order(c1, 1, false, 'H');
-  oi := pg_temp.mk_order(c1, 1, false, 'I');
+  oh := pg_temp.mk_order(1, false, 'H');
+  oi := pg_temp.mk_order(1, false, 'I');
   update public.orders set vence_en = now() - interval '1 minute' where id in (oh, oi);
   select stock_reservado into rs0 from public.products where id = pid;
   -- H: primero el dueño cancela; luego corre el vencimiento
@@ -1448,7 +1470,7 @@ begin
   assert rs = rs0 - 2, 'cada pedido liberó su unidad exactamente una vez';
 
   -- ================= Sin UPDATE directo por la API =================
-  oj := pg_temp.mk_order(c1, 1, true, 'J');
+  oj := pg_temp.mk_order(1, true, 'J');
   set local role authenticated;
   perform set_config('request.jwt.claims', admin_claims, true);
   begin
@@ -1621,7 +1643,8 @@ end $$;
 -- ---------------------------------------------------------------------------
 insert into public.products (id, category_id, nombre, slug, precio, stock, activo)
 values ('50000000-0000-0000-0000-0000000000c1', '40000000-0000-0000-0000-000000000012', 'Producto de categoría apagable', 'p-cat-off', 10, 10, true);
--- Está en el carrito de la cuenta c1
+-- Está en el carrito de la cuenta c1 (y es lo único en él: create_order exige que coincidan)
+delete from public.cart_items where user_id = '00000000-0000-0000-0000-0000000000c1';
 insert into public.cart_items (user_id, product_id, cantidad)
 values ('00000000-0000-0000-0000-0000000000c1', '50000000-0000-0000-0000-0000000000c1', 2);
 
@@ -2516,6 +2539,211 @@ begin
   assert seen = 'Lunes a viernes, 9:00 a 18:00', 'el público lee el horario por la vista';
   reset role;
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- create_order acotado y límite de intentos (migración 21)
+-- Se usan usuarios, productos y claves nuevos de esta corrida: los datos reales no cambian el resultado.
+-- ---------------------------------------------------------------------------
+insert into public.products (id, category_id, nombre, slug, precio, stock)
+values ('20000000-0000-0000-0000-0000000000d1', '10000000-0000-0000-0000-000000000001', 'Límite', 'p-limite', 10, 100),
+       ('20000000-0000-0000-0000-0000000000d2', '10000000-0000-0000-0000-000000000001', 'Límite 2', 'p-limite-2', 10, 100);
+
+do $$
+declare
+  admin_claims constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}';
+  cust_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}';
+  pa constant uuid := '20000000-0000-0000-0000-0000000000d1';
+  pb constant uuid := '20000000-0000-0000-0000-0000000000d2';
+  u  constant uuid := gen_random_uuid();   -- tope de pendientes
+  w  constant uuid := gen_random_uuid();   -- carrito vacío, doble llamada y carrito cambiado
+  one_a constant jsonb := '[{"product_id":"20000000-0000-0000-0000-0000000000d1","nombre":"Límite","precio_unitario":10,"cantidad":1}]';
+  run constant text := replace(gen_random_uuid()::text, '-', '');
+  k1 constant text := encode(sha256(convert_to('k1-' || run, 'UTF8')), 'hex');
+  k2 constant text := encode(sha256(convert_to('k2-' || run, 'UTF8')), 'hex');
+  o record;
+  orders uuid[] := '{}';
+  rs0 integer;
+  rs integer;
+  ok boolean;
+begin
+  insert into auth.users (id) values (u), (w);
+
+  -- ---- Tope: 3 pedidos en pendiente_pago por usuario --------------------------------------------
+  for i in 1..3 loop
+    insert into public.cart_items (user_id, product_id, cantidad) values (u, pa, 1);
+    set local role service_role;
+    select * into o from public.create_order(u, 'U', 'u@test.ec', '0999999999', '{}'::jsonb, one_a, 10, 0, 0, 0, 10, 48);
+    reset role;
+    orders := orders || o.o_id;
+  end loop;
+  assert (select count(*) from public.orders where user_id = u and estado = 'pendiente_pago') = 3, 'tres pendientes permitidos';
+
+  insert into public.cart_items (user_id, product_id, cantidad) values (u, pa, 1);
+  select stock_reservado into rs0 from public.products where id = pa;
+  set local role service_role;
+  begin
+    perform public.create_order(u, 'U', 'u@test.ec', '0999999999', '{}'::jsonb, one_a, 10, 0, 0, 0, 10, 48);
+    raise exception 'el cuarto pedido pendiente debía rechazarse';
+  exception when raise_exception then assert sqlerrm = 'limite_pendientes', 'cuarto pendiente: ' || sqlerrm; end;
+  reset role;
+  assert (select stock_reservado from public.products where id = pa) = rs0, 'el rechazo no aparta stock';
+  assert (select count(*) from public.cart_items where user_id = u) = 1, 'el rechazo no vacía el carrito';
+
+  -- Con un comprobante en revisión el pedido ya no está pendiente de pago: se libera un cupo
+  set local role service_role;
+  perform public.submit_payment_proof(u, orders[1], 'limite/a.png', repeat('c', 64));
+  select * into o from public.create_order(u, 'U', 'u@test.ec', '0999999999', '{}'::jsonb, one_a, 10, 0, 0, 0, 10, 48);
+  reset role;
+  assert o.o_id is not null, 'con un pedido en revisión, se puede crear otro';
+
+  -- Al cancelar uno, se libera otro cupo
+  insert into public.cart_items (user_id, product_id, cantidad) values (u, pa, 1);
+  set local role service_role;
+  begin
+    perform public.create_order(u, 'U', 'u@test.ec', '0999999999', '{}'::jsonb, one_a, 10, 0, 0, 0, 10, 48);
+    raise exception 'otra vez en el tope';
+  exception when raise_exception then assert sqlerrm = 'limite_pendientes', 'tope otra vez: ' || sqlerrm; end;
+  reset role;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  perform public.admin_cancel_order(orders[2], 'Prueba de tope');
+  reset role;
+  set local role service_role;
+  select * into o from public.create_order(u, 'U', 'u@test.ec', '0999999999', '{}'::jsonb, one_a, 10, 0, 0, 0, 10, 48);
+  reset role;
+  assert o.o_id is not null, 'al cancelar uno se puede crear otro';
+
+  -- ---- Carrito vacío ------------------------------------------------------------------------------
+  set local role service_role;
+  begin
+    perform public.create_order(w, 'W', 'w@test.ec', '0999999999', '{}'::jsonb, one_a, 10, 0, 0, 0, 10, 48);
+    raise exception 'sin carrito no hay pedido';
+  exception when raise_exception then assert sqlerrm = 'carrito_vacio', 'carrito vacío: ' || sqlerrm; end;
+  reset role;
+
+  -- ---- Doble llamada (doble clic, dos pestañas): solo el primero crea el pedido -------------------
+  insert into public.cart_items (user_id, product_id, cantidad) values (w, pa, 2);
+  select stock_reservado into rs0 from public.products where id = pa;
+  set local role service_role;
+  perform public.create_order(w, 'W', 'w@test.ec', '0999999999', '{}'::jsonb,
+    '[{"product_id":"20000000-0000-0000-0000-0000000000d1","nombre":"Límite","precio_unitario":10,"cantidad":2}]', 20, 0, 0, 0, 20, 48);
+  begin
+    perform public.create_order(w, 'W', 'w@test.ec', '0999999999', '{}'::jsonb,
+      '[{"product_id":"20000000-0000-0000-0000-0000000000d1","nombre":"Límite","precio_unitario":10,"cantidad":2}]', 20, 0, 0, 0, 20, 48);
+    raise exception 'la segunda llamada no debía crear otro pedido';
+  exception when raise_exception then assert sqlerrm = 'carrito_vacio', 'segunda llamada: ' || sqlerrm; end;
+  reset role;
+  assert (select count(*) from public.orders where user_id = w) = 1, 'un solo pedido';
+  select stock_reservado into rs from public.products where id = pa;
+  assert rs = rs0 + 2, 'el stock se aparta una sola vez';
+
+  -- ---- Las líneas deben ser exactamente las del carrito -------------------------------------------
+  insert into public.cart_items (user_id, product_id, cantidad) values (w, pa, 2), (w, pb, 1);
+  set local role service_role;
+  -- Otra cantidad
+  begin
+    perform public.create_order(w, 'W', 'w@test.ec', '0999999999', '{}'::jsonb,
+      '[{"product_id":"20000000-0000-0000-0000-0000000000d1","nombre":"Límite","precio_unitario":10,"cantidad":1},
+        {"product_id":"20000000-0000-0000-0000-0000000000d2","nombre":"Límite 2","precio_unitario":10,"cantidad":1}]', 20, 0, 0, 0, 20, 48);
+    raise exception 'otra cantidad que la del carrito';
+  exception when raise_exception then assert sqlerrm = 'carrito_cambio', 'otra cantidad: ' || sqlerrm; end;
+  -- Falta una línea
+  begin
+    perform public.create_order(w, 'W', 'w@test.ec', '0999999999', '{}'::jsonb,
+      '[{"product_id":"20000000-0000-0000-0000-0000000000d1","nombre":"Límite","precio_unitario":10,"cantidad":2}]', 20, 0, 0, 0, 20, 48);
+    raise exception 'falta una línea del carrito';
+  exception when raise_exception then assert sqlerrm = 'carrito_cambio', 'falta una línea: ' || sqlerrm; end;
+  -- Línea repetida en lugar de la otra
+  begin
+    perform public.create_order(w, 'W', 'w@test.ec', '0999999999', '{}'::jsonb,
+      '[{"product_id":"20000000-0000-0000-0000-0000000000d1","nombre":"Límite","precio_unitario":10,"cantidad":2},
+        {"product_id":"20000000-0000-0000-0000-0000000000d1","nombre":"Límite","precio_unitario":10,"cantidad":2}]', 40, 0, 0, 0, 40, 48);
+    raise exception 'línea repetida';
+  exception when raise_exception then assert sqlerrm = 'carrito_cambio', 'línea repetida: ' || sqlerrm; end;
+  -- Identificador que no es uuid
+  begin
+    perform public.create_order(w, 'W', 'w@test.ec', '0999999999', '{}'::jsonb,
+      '[{"product_id":"no-es-uuid","nombre":"X","precio_unitario":10,"cantidad":2}]', 20, 0, 0, 0, 20, 48);
+    raise exception 'producto inválido';
+  exception when raise_exception then assert sqlerrm = 'cantidad_invalida', 'producto inválido: ' || sqlerrm; end;
+  -- Iguales al carrito (en otro orden): se crea
+  select * into o from public.create_order(w, 'W', 'w@test.ec', '0999999999', '{}'::jsonb,
+    '[{"product_id":"20000000-0000-0000-0000-0000000000d2","nombre":"Límite 2","precio_unitario":10,"cantidad":1},
+      {"product_id":"20000000-0000-0000-0000-0000000000d1","nombre":"Límite","precio_unitario":10,"cantidad":2}]', 30, 0, 0, 0, 30, 48);
+  reset role;
+  assert o.o_id is not null, 'con las mismas líneas del carrito, el pedido se crea';
+  assert (select count(*) from public.cart_items where user_id = w) = 0, 'y el carrito queda vacío';
+
+  -- ---- rate_limit_hit: solo service_role -----------------------------------------------------------
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin perform public.rate_limit_hit('login_ip', k1, 3, interval '1 hour'); raise exception 'anon no usa rate_limit_hit';
+  exception when insufficient_privilege then null; end;
+  begin perform 1 from public.rate_limits; raise exception 'anon no lee rate_limits';
+  exception when insufficient_privilege then null; end;
+  reset role;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  begin perform public.rate_limit_hit('login_ip', k1, 3, interval '1 hour'); raise exception 'un cliente no usa rate_limit_hit';
+  exception when insufficient_privilege then null; end;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin perform public.rate_limit_hit('login_ip', k1, 3, interval '1 hour'); raise exception 'ni el admin usa rate_limit_hit';
+  exception when insufficient_privilege then null; end;
+  begin perform 1 from public.rate_limits; raise exception 'ni el admin lee rate_limits';
+  exception when insufficient_privilege then null; end;
+  begin perform public.cleanup_rate_limits(); raise exception 'el admin no limpia rate_limits';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  -- ---- Límite: 3 por ventana, por bucket y clave ---------------------------------------------------
+  set local role service_role;
+  begin perform 1 from public.rate_limits; raise exception 'service_role no lee la tabla directo';
+  exception when insufficient_privilege then null; end;
+  assert public.rate_limit_hit('prueba_rl', k1, 3, interval '1 hour'), 'intento 1';
+  assert public.rate_limit_hit('prueba_rl', k1, 3, interval '1 hour'), 'intento 2';
+  assert public.rate_limit_hit('prueba_rl', k1, 3, interval '1 hour'), 'intento 3';
+  assert not public.rate_limit_hit('prueba_rl', k1, 3, interval '1 hour'), 'el cuarto se rechaza';
+  assert not public.rate_limit_hit('prueba_rl', k1, 3, interval '1 hour'), 'y el quinto también';
+  assert public.rate_limit_hit('prueba_rl', k2, 3, interval '1 hour'), 'otra clave tiene su propio conteo';
+  assert public.rate_limit_hit('prueba_rl_otro', k1, 3, interval '1 hour'), 'otro bucket tiene su propio conteo';
+
+  -- Parámetros inválidos: nunca una clave en claro
+  begin perform public.rate_limit_hit('prueba_rl', '190.1.2.3', 3, interval '1 hour'); raise exception 'IP en claro';
+  exception when raise_exception then assert sqlerrm = 'parametros_invalidos', 'IP en claro: ' || sqlerrm; end;
+  begin perform public.rate_limit_hit('prueba_rl', upper(k1), 3, interval '1 hour'); raise exception 'hex en mayúsculas';
+  exception when raise_exception then assert sqlerrm = 'parametros_invalidos', 'mayúsculas: ' || sqlerrm; end;
+  begin perform public.rate_limit_hit('Prueba RL', k1, 3, interval '1 hour'); raise exception 'bucket inválido';
+  exception when raise_exception then assert sqlerrm = 'parametros_invalidos', 'bucket: ' || sqlerrm; end;
+  begin perform public.rate_limit_hit('prueba_rl', k1, 0, interval '1 hour'); raise exception 'máximo 0';
+  exception when raise_exception then assert sqlerrm = 'parametros_invalidos', 'máximo: ' || sqlerrm; end;
+  begin perform public.rate_limit_hit('prueba_rl', k1, 3, interval '8 days'); raise exception 'ventana muy larga';
+  exception when raise_exception then assert sqlerrm = 'parametros_invalidos', 'ventana: ' || sqlerrm; end;
+  begin perform public.rate_limit_hit('prueba_rl', k1, 3, null); raise exception 'ventana nula';
+  exception when raise_exception then assert sqlerrm = 'parametros_invalidos', 'ventana nula: ' || sqlerrm; end;
+  reset role;
+
+  -- Vencida la ventana, se empieza de nuevo (se simula moviendo la ventana al pasado)
+  update public.rate_limits set ventana_inicio = now() - interval '2 hours', expira_en = now() - interval '1 hour'
+   where bucket = 'prueba_rl' and clave = k1;
+  set local role service_role;
+  assert public.rate_limit_hit('prueba_rl', k1, 3, interval '1 hour'), 'vencida la ventana, se permite de nuevo';
+  reset role;
+  assert (select intentos from public.rate_limits where bucket = 'prueba_rl' and clave = k1) = 1, 'el conteo se reinicia';
+
+  -- La limpieza borra solo lo vencido
+  update public.rate_limits set ventana_inicio = now() - interval '2 hours', expira_en = now() - interval '1 hour'
+   where bucket = 'prueba_rl' and clave = k2;
+  perform public.cleanup_rate_limits();
+  assert (select count(*) from public.rate_limits where bucket = 'prueba_rl' and clave = k2) = 0, 'la limpieza borra lo vencido';
+  assert (select count(*) from public.rate_limits where bucket = 'prueba_rl' and clave = k1) = 1, 'y conserva lo vigente';
+  -- La tabla no acepta claves en claro aunque se escriba directo
+  begin
+    insert into public.rate_limits (bucket, clave, ventana_inicio, expira_en, intentos)
+    values ('prueba_rl', 'ana@correo.com', now(), now() + interval '1 hour', 1);
+    raise exception 'la tabla no acepta un correo como clave';
+  exception when check_violation then null; end;
+end $$;
+
 rollback;
 
 select 'RLS OK' as resultado;

@@ -22,17 +22,3 @@ export function getSupabaseEnv() {
   }
   return parsed.data;
 }
-
-/**
- * Clave service_role. Solo servidor: no importar este módulo desde componentes de cliente
- * (la variable no tiene NEXT_PUBLIC_, así que en el navegador llegaría vacía).
- */
-export function getServiceRoleKey() {
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!key) {
-    throw new Error(
-      "Falta SUPABASE_SERVICE_ROLE_KEY. Revisa .env.local (ver .env.example).",
-    );
-  }
-  return key;
-}

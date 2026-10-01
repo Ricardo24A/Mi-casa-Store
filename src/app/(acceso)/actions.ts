@@ -3,6 +3,9 @@
 import { redirect } from "next/navigation";
 import { postLoginDestination } from "@/lib/admin-access";
 import { requireCustomer } from "@/lib/auth";
+import { clientIp } from "@/lib/client-ip";
+import { checkRateLimits } from "@/lib/rate-limit";
+import { emailIdentity, rateLimitMessage } from "@/lib/rate-limit-core";
 import { safeNext } from "@/lib/safe-next";
 import { createClient } from "@/lib/supabase/server";
 import { verifyTurnstile } from "@/lib/turnstile";
@@ -48,6 +51,18 @@ export async function iniciarSesion(_prev: AccountFormState, formData: FormData)
   const parsed = loginSchema.safeParse({ email: values.email, password: str(formData, "password") });
   if (!parsed.success) return { error: LOGIN_ERROR, values };
   if (!(await verifyTurnstile(formData.get("cf-turnstile-response")))) return { error: CAPTCHA_ERROR, values };
+  // Por IP y por correo, exista o no la cuenta (el mensaje no lo revela). Falla cerrado: sin límite
+  // se podrían probar contraseñas sin freno.
+  const limited = rateLimitMessage(
+    await checkRateLimits(
+      [
+        { rule: "loginIp", identity: await clientIp() },
+        { rule: "loginEmail", identity: emailIdentity(parsed.data.email) },
+      ],
+      "closed",
+    ),
+  );
+  if (limited) return { error: limited, values };
 
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signInWithPassword(parsed.data);
@@ -83,6 +98,17 @@ export async function registrar(_prev: AccountFormState, formData: FormData): Pr
   });
   if (!parsed.success) return { fieldErrors: fieldErrors(parsed.error), values };
   if (!(await verifyTurnstile(formData.get("cf-turnstile-response")))) return { error: CAPTCHA_ERROR, values };
+  // Falla cerrado: sin límite se podrían crear cuentas falsas en masa.
+  const limited = rateLimitMessage(
+    await checkRateLimits(
+      [
+        { rule: "registroIp", identity: await clientIp() },
+        { rule: "registroEmail", identity: emailIdentity(parsed.data.email) },
+      ],
+      "closed",
+    ),
+  );
+  if (limited) return { error: limited, values };
 
   const next = safeNext(formData.get("next"), "");
   const redirectTo = `${siteUrl()}/cuenta/confirmar${next ? `?next=${encodeURIComponent(next)}` : ""}`;
@@ -114,6 +140,18 @@ export async function solicitarRecuperacion(_prev: AccountFormState, formData: F
   const parsed = recoverSchema.safeParse(values);
   if (!parsed.success) return { fieldErrors: fieldErrors(parsed.error), values };
   if (!(await verifyTurnstile(formData.get("cf-turnstile-response")))) return { error: CAPTCHA_ERROR, values };
+  // Falla abierto: Supabase Auth también limita los correos de recuperación, y bloquear aquí dejaría a
+  // alguien sin poder recuperar su cuenta. El mensaje es el mismo exista o no el correo.
+  const limited = rateLimitMessage(
+    await checkRateLimits(
+      [
+        { rule: "recuperarIp", identity: await clientIp() },
+        { rule: "recuperarEmail", identity: emailIdentity(parsed.data.email) },
+      ],
+      "open",
+    ),
+  );
+  if (limited) return { error: limited, values };
 
   const supabase = await createClient();
   const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {

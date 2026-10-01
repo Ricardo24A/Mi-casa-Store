@@ -202,7 +202,7 @@ Estructura: header, hero simple, categorías (solo las que tienen productos), "M
 
 | Cambio | Desde | Hacia | Stock |
 |---|---|---|---|
-| Crear pedido (`create_order`) | - | `pendiente_pago` | reserva |
+| Crear pedido (`create_order`; máximo 3 en `pendiente_pago` por usuario; las líneas deben ser las del carrito, que se bloquea y se vacía) | - | `pendiente_pago` | reserva |
 | Vencer (`expire_orders`, cron cada 5 min) | `pendiente_pago` con plazo vencido | `vencido` | libera la reserva |
 | Cancelar (`admin_cancel_order`) | `pendiente_pago`, `comprobante_recibido` | `cancelado` | libera la reserva |
 | Rechazar el pedido (`admin_reject_order`) | `comprobante_recibido` | `rechazado` | libera la reserva |
@@ -233,6 +233,7 @@ Aplicado en `supabase/migrations/`. Toda tabla tiene RLS activo y permisos (GRAN
 - `payment_proofs` (id, order_id, archivo en el bucket privado `payment-proofs`, hash SHA-256, estado: en_revision | aprobado | rechazado, motivo, revisado_por, revisado_en). Un rechazo exige motivo.
 - `store_settings` (una sola fila: datos del negocio, horario_atencion, cuentas_bancarias, costo_envio, envio_gratis_desde, descuento_transferencia_pct, horas_limite_pago)
 - `contact_messages` (id, nombre, email, telefono normalizado, asunto opcional, mensaje, aceptado_en, estado: nuevo | leido | archivado, created_at, leido_en, ip_hash temporal). Sin permisos de escritura por la API: se crea con `create_contact_message` (solo `service_role`) y cambia de estado con funciones admin; solo el admin con 2FA lee.
+- `rate_limits` (bucket, clave HMAC, ventana_inicio, expira_en, intentos): límite de intentos de las acciones de servidor. Nadie la lee por la API; solo `rate_limit_hit()` (service_role) y `cleanup_rate_limits()` (pg_cron, cada hora).
 - Vista `visible_categories`: categorías y subcategorías con al menos un producto activo (sección 4).
 
 Reglas en la base de datos: un pedido no pasa a `comprobante_recibido` sin comprobante ni a `pagado` sin uno aprobado; `stock_reservado` no supera `stock`.
@@ -246,7 +247,7 @@ Reglas en la base de datos: un pedido no pasa a `comprobante_recibido` sin compr
 - [ ] **Comprobantes**: bucket privado (hecho), acceso al admin solo con URLs firmadas temporales (Fase 5)
 - [ ] **Subida de archivos**: solo JPG, PNG o PDF, tamaño máximo (ej. 5 MB), verificar el tipo real del archivo (no solo la extensión), nombres generados por el servidor
 - [ ] Hash del comprobante para detectar el mismo archivo usado en varios pedidos
-- [ ] Rate limiting en login, checkout y subida de comprobantes
+- [x] Rate limiting en login, checkout y subida de comprobantes (`src/lib/rate-limit.ts`, migración 21)
 - [x] Imágenes de productos en bucket con reglas claras (lectura pública, escritura solo admin)
 - [x] Secretos solo en variables de entorno, `.env` en `.gitignore`
 - [ ] Cabeceras de seguridad (CSP, HSTS, X-Frame-Options), HTTPS obligatorio
@@ -257,7 +258,7 @@ Reglas en la base de datos: un pedido no pasa a `comprobante_recibido` sin compr
 - [ ] Política de privacidad y consentimiento acordes a la normativa ecuatoriana de protección de datos personales (los comprobantes contienen datos bancarios)
 - [ ] **SMTP propio con Resend** para los correos de Supabase Auth (confirmar correo, recuperar contraseña); el correo integrado de Supabase solo sirve para pruebas
 - [ ] **Turnstile** en registro, login y recuperación de clientes, con claves reales (sin `TURNSTILE_SECRET_KEY` en producción el servidor rechaza); el login único ya lo incluye también para el administrador
-- [ ] **Rate limiting propio** en login (cliente y admin), registro, recuperar contraseña, checkout y subida de comprobantes, además del límite de Supabase Auth
+- [x] **Rate limiting propio** en login (cliente y admin), registro, recuperar contraseña, código 2FA, checkout y subida de comprobantes, además del límite de Supabase Auth. Reglas en `src/lib/rate-limit-core.ts`; falla cerrado en login, registro y pedidos, abierto en recuperar contraseña, 2FA y comprobantes
 - [ ] **CSP estricta** con nonce; debe permitir `challenges.cloudflare.com` (script y frame de Turnstile) y `data:` en `img-src` (QR del 2FA)
 - [ ] Revisión de seguridad final antes de producción
 
