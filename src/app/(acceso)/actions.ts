@@ -2,17 +2,21 @@
 
 import { redirect } from "next/navigation";
 import { postLoginDestination } from "@/lib/admin-access";
-import { requireCustomer } from "@/lib/auth";
+import { getVerifiedFactors } from "@/lib/auth";
 import { clientIp } from "@/lib/client-ip";
 import { checkRateLimits } from "@/lib/rate-limit";
 import { emailIdentity, rateLimitMessage } from "@/lib/rate-limit-core";
+import { passwordChangeRules } from "@/lib/password-change";
+import { clearRecoveryCookie } from "@/lib/recovery-cookie";
 import { safeNext } from "@/lib/safe-next";
+import { getSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/server";
 import { verifyTurnstile } from "@/lib/turnstile";
+import { isCurrentPassword } from "@/lib/verify-password";
+import { passwordChangeSchema } from "@/lib/validation/password";
 import {
   fieldErrors,
   loginSchema,
-  newPasswordSchema,
   recoverSchema,
   registerSchema,
 } from "@/lib/validation/account";
@@ -30,10 +34,6 @@ export interface AccountFormState {
 const LOGIN_ERROR = "Correo o contraseña incorrectos.";
 const CAPTCHA_ERROR = "No pudimos verificar que eres una persona. Inténtalo de nuevo.";
 const RATE_LIMIT_ERROR = "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.";
-
-function siteUrl() {
-  return (process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000").replace(/\/$/, "");
-}
 
 function str(formData: FormData, name: string) {
   const v = formData.get(name);
@@ -111,7 +111,7 @@ export async function registrar(_prev: AccountFormState, formData: FormData): Pr
   if (limited) return { error: limited, values };
 
   const next = safeNext(formData.get("next"), "");
-  const redirectTo = `${siteUrl()}/cuenta/confirmar${next ? `?next=${encodeURIComponent(next)}` : ""}`;
+  const redirectTo = `${getSiteUrl()}/cuenta/confirmar${next ? `?next=${encodeURIComponent(next)}` : ""}`;
 
   const supabase = await createClient();
   // El rol NO se envía: el trigger de la base de datos crea el perfil siempre como 'customer'.
@@ -155,7 +155,7 @@ export async function solicitarRecuperacion(_prev: AccountFormState, formData: F
 
   const supabase = await createClient();
   const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
-    redirectTo: `${siteUrl()}/cuenta/confirmar?tipo=recovery`,
+    redirectTo: `${getSiteUrl()}/cuenta/confirmar?tipo=recovery`,
   });
   if (error?.status === 429) return { error: RATE_LIMIT_ERROR, values };
 
@@ -163,19 +163,53 @@ export async function solicitarRecuperacion(_prev: AccountFormState, formData: F
   return { ok: "Si el correo tiene una cuenta, te enviamos un enlace para crear una contraseña nueva." };
 }
 
-/** Cambia la contraseña con la sesión que abrió el enlace de recuperación. */
+/**
+ * Cambia la contraseña de la sesión abierta, sea de un cliente o del administrador:
+ *  - desde el enlace de recuperación: sin la contraseña actual (el aviso firmado lo permite);
+ *  - desde una sesión normal: con la contraseña actual (reautenticación);
+ *  - un administrador con 2FA sin validar en esta sesión: además, su código.
+ * Después cierra la sesión en todos los dispositivos y lleva al login: el administrador vuelve a
+ * entrar con la contraseña nueva y su código de 2 pasos.
+ */
 export async function guardarNuevaClave(_prev: AccountFormState, formData: FormData): Promise<AccountFormState> {
-  await requireCustomer();
-  const parsed = newPasswordSchema.safeParse({
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user?.email) return { error: "Tu sesión venció. Pide un enlace nuevo para crear tu contraseña." };
+
+  const rules = await passwordChangeRules(user.id);
+  const parsed = passwordChangeSchema(rules).safeParse({
     password: str(formData, "password"),
     confirm: str(formData, "confirm"),
+    current: str(formData, "current"),
+    code: str(formData, "code"),
   });
   if (!parsed.success) return { fieldErrors: fieldErrors(parsed.error) };
 
-  const supabase = await createClient();
+  // Por usuario. Falla cerrado: este formulario comprueba la contraseña actual, como el login.
+  const limited = rateLimitMessage(await checkRateLimits([{ rule: "cambioClave", identity: user.id }], "closed"));
+  if (limited) return { error: limited };
+
+  if (rules.needsCurrent && !(await isCurrentPassword(user.email, parsed.data.current as string))) {
+    return { fieldErrors: { current: "La contraseña actual no es correcta." } };
+  }
+
+  if (rules.needsCode) {
+    const factor = (await getVerifiedFactors())[0];
+    if (!factor) return { error: "No encontramos tu código de 2 pasos. Vuelve a iniciar sesión." };
+    const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: factor.id, code: parsed.data.code as string });
+    if (error) return { fieldErrors: { code: "Código incorrecto o vencido. Revisa la hora de tu teléfono." } };
+  }
+
   const { error } = await supabase.auth.updateUser({ password: parsed.data.password });
   if (error) {
+    if (error.code === "same_password") return { fieldErrors: { password: "La contraseña nueva debe ser distinta de la actual." } };
+    if (error.code === "weak_password") return { fieldErrors: { password: "Elige una contraseña más segura." } };
     return { error: "No pudimos cambiar la contraseña. Pide un enlace nuevo e inténtalo otra vez." };
   }
-  return { ok: "Tu contraseña se cambió correctamente." };
+
+  await clearRecoveryCookie();
+  await supabase.auth.signOut({ scope: "global" });
+  redirect("/login?aviso=clave");
 }

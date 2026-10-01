@@ -1,12 +1,28 @@
 import type { NextConfig } from "next";
+import { buildCsp, cspHeaderName } from "./src/lib/csp";
+import { resolveSiteUrl } from "./src/lib/site-url";
 
+// En producción falta NEXT_PUBLIC_SITE_URL (o es inválida) = la compilación y el arranque fallan aquí
+// con un mensaje claro, en vez de usar localhost en los enlaces de los correos.
+resolveSiteUrl(process.env.NEXT_PUBLIC_SITE_URL, process.env.NODE_ENV);
+
+/**
+ * INTERRUPTOR DE LA CSP (ver README, "Cabeceras de seguridad"):
+ *   false = Content-Security-Policy-Report-Only: no bloquea nada; las infracciones salen en la consola
+ *           del navegador. Así se publica primero, para revisar que nada legítimo quede fuera.
+ *   true  = Content-Security-Policy: el navegador bloquea lo que la política no permite.
+ */
+const CSP_ENFORCE = false;
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL) : undefined;
 // Host del proyecto Supabase (para permitir imágenes públicas de productos).
-const supabaseHost = process.env.NEXT_PUBLIC_SUPABASE_URL
-  ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname
-  : undefined;
+const supabaseHost = supabaseUrl?.hostname;
 
-// Cabeceras de seguridad base. La CSP estricta (con nonce) se define en la Fase 6.
 const securityHeaders = [
+  {
+    key: cspHeaderName(CSP_ENFORCE),
+    value: buildCsp({ supabaseOrigin: supabaseUrl?.origin, dev: process.env.NODE_ENV !== "production", enforce: CSP_ENFORCE }),
+  },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -14,10 +30,14 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), payment=()",
   },
+  // Sin `preload`: inscribir el dominio en la lista de precarga de los navegadores es casi irreversible y
+  // se decide cuando el dominio definitivo esté confirmado.
   {
     key: "Strict-Transport-Security",
-    value: "max-age=63072000; includeSubDomains; preload",
+    value: "max-age=63072000; includeSubDomains",
   },
+  // Aísla la ventana de la tienda de las que abra o la abran (los enlaces externos ya usan noopener).
+  { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
 ];
 
 const nextConfig: NextConfig = {

@@ -250,8 +250,8 @@ Reglas en la base de datos: un pedido no pasa a `comprobante_recibido` sin compr
 - [x] Rate limiting en login, checkout y subida de comprobantes (`src/lib/rate-limit.ts`, migración 21)
 - [x] Imágenes de productos en bucket con reglas claras (lectura pública, escritura solo admin)
 - [x] Secretos solo en variables de entorno, `.env` en `.gitignore`
-- [ ] Cabeceras de seguridad (CSP, HSTS, X-Frame-Options), HTTPS obligatorio
-- [ ] Cookies de sesión con `secure` y `sameSite=lax`; sin tokens en `localStorage`; XSS mitigado con CSP estricta (al final). Nota: `@supabase/ssr` no usa `httpOnly` porque el navegador debe leer la sesión
+- [ ] Cabeceras de seguridad (CSP, HSTS, X-Frame-Options), HTTPS obligatorio. Hechas en `next.config.ts` (HSTS sin `preload`, `Cross-Origin-Opener-Policy: same-origin`); falta pasar la CSP de Report-Only a bloqueo (README, "Cabeceras de seguridad")
+- [ ] Cookies de sesión con `secure` y `sameSite=lax`; sin tokens en `localStorage`; XSS mitigado con la CSP (ver abajo) y sin HTML crudo en React. Nota: `@supabase/ssr` no usa `httpOnly` porque el navegador debe leer la sesión
 - [ ] 2FA para el dueño y contraseñas únicas; ninguna credencial de ejemplo en el código
 - [ ] `npm audit` y dependencias actualizadas antes de publicar
 - [ ] Backups automáticos de la base de datos
@@ -259,7 +259,7 @@ Reglas en la base de datos: un pedido no pasa a `comprobante_recibido` sin compr
 - [ ] **SMTP propio con Resend** para los correos de Supabase Auth (confirmar correo, recuperar contraseña); el correo integrado de Supabase solo sirve para pruebas
 - [ ] **Turnstile** en registro, login y recuperación de clientes, con claves reales (sin `TURNSTILE_SECRET_KEY` en producción el servidor rechaza); el login único ya lo incluye también para el administrador
 - [x] **Rate limiting propio** en login (cliente y admin), registro, recuperar contraseña, código 2FA, checkout y subida de comprobantes, además del límite de Supabase Auth. Reglas en `src/lib/rate-limit-core.ts`; falla cerrado en login, registro y pedidos, abierto en recuperar contraseña, 2FA y comprobantes
-- [ ] **CSP estricta** con nonce; debe permitir `challenges.cloudflare.com` (script y frame de Turnstile) y `data:` en `img-src` (QR del 2FA)
+- [ ] **CSP sin nonce** (`src/lib/csp.ts`), publicada primero como Report-Only y con un interruptor (`CSP_ENFORCE` en `next.config.ts`) para pasar a bloqueo. Se descartó la CSP con nonce: el proyecto usa `cacheComponents` y la guía de Next indica que el prerenderizado parcial es incompatible con nonces (exigiría renderizar todo en cada visita). Permite `challenges.cloudflare.com` (script y frame de Turnstile), `data:` y `blob:` en `img-src` (QR del 2FA y vistas previas) y el dominio de Supabase para imágenes
 - [ ] Revisión de seguridad final antes de producción
 
 ## 11. Fuera de alcance por ahora
@@ -347,7 +347,8 @@ Una sesión de trabajo por fase. Al terminar cada una: probar, hacer commit y ac
 - Next.js 16 (App Router). Tiene cambios respecto a versiones anteriores (por ejemplo, `middleware` ahora se llama `proxy`). Antes de escribir código, consultar la doc local en `node_modules/next/dist/docs/`.
 - shadcn/ui no está instalado (su CLI necesita `ui.shadcn.com`). Escribir los componentes a mano con `cn()` de `src/lib/utils.ts`, o ejecutar `npx shadcn@latest init` en un equipo con acceso.
 - Rutas: `src/app/(tienda)` para la vista del cliente y `src/app/(admin)` para el dashboard.
-- Supabase: clientes en `src/lib/supabase/` (`client.ts` para navegador, `server.ts` para servidor). Variables en `.env.local` (ver `.env.example`).
+- Supabase: clientes en `src/lib/supabase/` (`server.ts` con la sesión, `public.ts` sin sesión para el catálogo, `admin.ts` con service_role). El navegador no habla con Supabase. Los secretos del servidor (service_role, clave HMAC) están en `src/lib/server-env.ts`, con `server-only`. Variables en `.env.local` (ver `.env.example`); `NEXT_PUBLIC_SITE_URL` es obligatoria en producción (`src/lib/site-url.ts`).
+- Contraseñas: `/nueva-clave` sirve a clientes y administrador. Sin el enlace de recuperación pide la contraseña actual; un admin con 2FA sin validar pide también el código. Al guardar se cierran todas las sesiones.
 - Commits: título corto en español que describa el cambio (por ejemplo, "Catálogo con categorías visibles"). **No mencionar fases** ("Fase 2", etc.) ni en el título ni en el cuerpo.
 - `prototipos/` es solo referencia: está excluido de TypeScript (`tsconfig.json`) y de ESLint. No importar nada desde ahí.
 

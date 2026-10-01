@@ -11,7 +11,7 @@ export const metadata: Metadata = { title: "Iniciar sesión" };
 
 /** Quien ya tiene sesión no ve el formulario: un cliente vuelve a su destino; un admin, a su paso de 2FA. */
 async function LoginContent({ searchParams }: { searchParams: PageProps<"/login">["searchParams"] }) {
-  const { next, error } = await searchParams;
+  const { next, error, aviso } = await searchParams;
   const nextPath = typeof next === "string" ? safeNext(next, "") : "";
 
   const session = await getAdminSession();
@@ -27,6 +27,11 @@ async function LoginContent({ searchParams }: { searchParams: PageProps<"/login"
       {toCheckout && (
         <p role="status" className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-sm text-accent">
           Inicia sesión o crea una cuenta para pagar. Tu carrito se conserva.
+        </p>
+      )}
+      {aviso === "clave" && (
+        <p role="status" className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-sm text-accent">
+          Tu contraseña se cambió. Inicia sesión con la contraseña nueva.
         </p>
       )}
       {error === "enlace" && (

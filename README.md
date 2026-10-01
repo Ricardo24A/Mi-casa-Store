@@ -23,7 +23,7 @@ Completa `.env.local` (no se sube al repositorio):
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API | Pública |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase → Project Settings → API (`anon` o `publishable`) | Pública; la seguridad la dan las políticas RLS |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API (`service_role` o `secret`) | **Solo servidor.** Se salta RLS. Nunca con prefijo `NEXT_PUBLIC_`, ni en el navegador, ni en el repositorio |
-| `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` en local; el dominio real en producción | |
+| `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` en local; el dominio real en producción | **Obligatoria en producción** (también en Preview de Vercel): sin ella, o si no es `https://` con solo el dominio, `next build` y `next start` fallan con un mensaje claro. Solo `localhost` admite `http` |
 | `RATE_LIMIT_SECRET` | Una cadena larga al azar (`openssl rand -hex 32`) | **Solo servidor.** Opcional: clave del HMAC del IP para el límite del formulario de contacto; sin ella se usa la clave `service_role` |
 
 ## Base de datos (Supabase)
@@ -98,6 +98,8 @@ Registro, login, confirmación de correo y recuperación de contraseña usan Sup
 3. **Sign In / Providers → Email:** deja activo "Confirm email".
 4. **SMTP:** el correo integrado de Supabase tiene un límite muy bajo y es solo para pruebas. Antes de publicar configura SMTP propio con Resend (Authentication → SMTP Settings).
 
+**Contraseña nueva** (`/nueva-clave`, para clientes y administrador): desde el enlace de recuperación del correo no pide la contraseña actual (la ruta `/cuenta/confirmar` marca la sesión con un aviso firmado en una cookie httpOnly de 15 minutos); desde una sesión abierta sí la pide. Un administrador con 2FA que llega por el enlace confirma además con su código. Al guardar se cierran todas sus sesiones y vuelve al login (el administrador, con su 2FA). Hay enlaces en Mis datos y en Configuración.
+
 El rol nunca lo envía el cliente: el trigger `handle_new_user` crea todo perfil como `customer` e ignora `raw_user_meta_data`. Hay un solo login (`/login`) para clientes y administrador. Un cliente va a su destino o al home; un administrador va a `/admin`, donde se le pide registrar o verificar el 2FA: con solo la contraseña nunca obtiene el panel. `/admin/login` y `/cuenta/login` redirigen a `/login`.
 
 **Turnstile:** crea un widget en Cloudflare y define `NEXT_PUBLIC_TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` (ver `.env.example`). En producción, sin el secreto el servidor rechaza registros y logins de clientes.
@@ -121,7 +123,7 @@ npx tsc --noEmit # revisión de tipos
 ```
 src/app/(tienda)/     vista del cliente
 src/app/(admin)/      dashboard del dueño
-src/lib/supabase/     clientes de Supabase (navegador, servidor, service_role)
+src/lib/supabase/     clientes de Supabase (servidor con sesión, público sin sesión, service_role)
 src/lib/validation/   esquemas Zod
 src/lib/auth.ts       getUser, getRole, requireAdmin
 src/proxy.ts          refresco de sesión y protección de /admin
@@ -130,6 +132,20 @@ prototipos/           solo referencia visual (fuera de TypeScript y ESLint)
 ```
 
 ## Seguridad
+
+### Cabeceras de seguridad
+
+Están en [`next.config.ts`](next.config.ts): CSP, `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, HSTS de 2 años con subdominios (sin `preload` hasta confirmar el dominio) y `Cross-Origin-Opener-Policy: same-origin`.
+
+**CSP: un solo interruptor.** La política se arma en [`src/lib/csp.ts`](src/lib/csp.ts) y hoy se publica como `Content-Security-Policy-Report-Only`: no bloquea nada y las infracciones salen en la consola del navegador. Para pasar a modo de bloqueo:
+
+1. Recorre la tienda, el checkout, la subida de comprobantes, el login con Turnstile y el panel (incluido el QR del 2FA y el visor de comprobantes) con la consola abierta y confirma que no aparezcan avisos de "Content-Security-Policy".
+2. En `next.config.ts` cambia `const CSP_ENFORCE = false;` por `true` y vuelve a desplegar.
+3. Repite el recorrido. Para volver atrás, `false` y desplegar.
+
+Es una CSP sin nonce porque el proyecto usa `cacheComponents` (prerenderizado parcial), que la guía de Next declara incompatible con nonces; por eso los scripts en línea se permiten con `'unsafe-inline'`. Aun así bloquea scripts, marcos y conexiones de otros sitios, `<object>`, el cambio de `<base>`, el envío de formularios a otros dominios y que la tienda se muestre dentro de otra página.
+
+### Otras reglas
 
 - `.env.local` nunca se sube. La clave `service_role` solo va en variables de entorno del servidor.
 - Precios y totales se calculan siempre en el servidor; el navegador solo envía IDs y cantidades.

@@ -113,21 +113,26 @@ export function RecoverForm() {
   );
 }
 
-export function NewPasswordForm() {
+/**
+ * Contraseña nueva. `needsCurrent`: pedir la actual (sesión normal, no el enlace del correo).
+ * `needsCode`: pedir el código de 2 pasos (administrador). Si sale bien, la acción cierra la sesión
+ * y lleva al login; un error conserva la pantalla con el mensaje bajo cada campo.
+ */
+export function NewPasswordForm({ needsCurrent, needsCode }: { needsCurrent: boolean; needsCode: boolean }) {
   const [state, action] = useActionState(guardarNuevaClave, initial);
   const e = state.fieldErrors ?? {};
-  if (state.ok) {
-    return (
-      <div className="space-y-4">
-        <FormSuccess>{state.ok}</FormSuccess>
-        <Link href="/cuenta" className="inline-flex min-h-11 items-center font-semibold text-accent hover:underline">
-          Ir a mi cuenta
-        </Link>
-      </div>
-    );
-  }
   return (
     <form action={action} className="space-y-4" noValidate>
+      {needsCurrent && (
+        <Field
+          label="Contraseña actual"
+          name="current"
+          type="password"
+          autoComplete="current-password"
+          required
+          error={e.current}
+        />
+      )}
       <Field
         label="Contraseña nueva"
         name="password"
@@ -145,8 +150,28 @@ export function NewPasswordForm() {
         required
         error={e.confirm}
       />
+      {needsCode && (
+        <Field
+          label="Código de 2 pasos"
+          name="code"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          maxLength={6}
+          required
+          hint="Los 6 dígitos de tu app de autenticación."
+          error={e.code}
+        />
+      )}
+      <p className="text-sm text-ink-soft">Al guardarla se cerrará tu sesión en todos tus dispositivos y volverás a iniciar sesión.</p>
       <FormError>{state.error}</FormError>
       <SubmitButton pendingLabel="Guardando…">Guardar contraseña</SubmitButton>
+      {needsCurrent && (
+        <p className="text-center text-sm">
+          <Link href="/recuperar" className="inline-flex min-h-11 items-center text-accent hover:underline">
+            Olvidé mi contraseña actual
+          </Link>
+        </p>
+      )}
     </form>
   );
 }

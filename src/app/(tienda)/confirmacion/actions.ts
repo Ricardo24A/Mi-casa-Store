@@ -53,14 +53,9 @@ export async function subirComprobante(referencia: unknown, formData: FormData):
   // a un cliente sin poder pagar si la función de límite fallara.
   const limited = rateLimitMessage(await checkRateLimits([{ rule: "comprobante", identity: session.userId }], "open"));
   if (limited) return { ok: false, error: limited };
-  // Antes de leerlo en memoria.
-  if (file.size > PROOF_MAX_BYTES) return { ok: false, error: "El archivo pesa más de 4 MB." };
 
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const check = checkProofBytes(bytes);
-  if (!check.ok) return { ok: false, error: check.error };
-
-  // RLS: solo el dueño ve su pedido.
+  // Primero el pedido: existe, es de este usuario y admite comprobante. Solo entonces se lee el archivo
+  // en memoria. RLS: solo el dueño ve su pedido; el filtro por user_id es una segunda barrera.
   const supabase = await createClient();
   const { data: order } = await supabase
     .from("orders")
@@ -69,10 +64,16 @@ export async function subirComprobante(referencia: unknown, formData: FormData):
     .eq("user_id", session.userId)
     .maybeSingle();
   if (!order) return { ok: false, error: "No encontramos ese pedido." };
-  // La base de datos decide el detalle; esto solo evita subir un archivo que seguro no se usará.
+  // La base de datos decide el detalle; esto solo evita leer y subir un archivo que seguro no se usará.
   if (order.estado !== "pendiente_pago" && order.estado !== "comprobante_recibido") {
     return { ok: false, error: "Este pedido ya no admite cambios de comprobante." };
   }
+
+  // El tamaño, antes de leerlo en memoria; después, el tipo real por los primeros bytes.
+  if (file.size > PROOF_MAX_BYTES) return { ok: false, error: "El archivo pesa más de 4 MB." };
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const check = checkProofBytes(bytes);
+  if (!check.ok) return { ok: false, error: check.error };
 
   const hash = createHash("sha256").update(bytes).digest("hex");
   const path = `${session.userId}/${order.id}/${randomUUID()}.${check.extension}`;

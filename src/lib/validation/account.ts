@@ -1,17 +1,14 @@
 import { z } from "zod";
 import { PROVINCIAS } from "@/config/ecuador";
 import { text, uuid } from "./common";
+import { passwordSchema } from "./password";
+
+export { passwordSchema };
 
 export const emailSchema = z
   .string()
   .trim()
   .pipe(z.email({ error: "Escribe un correo válido" }).max(254, { error: "El correo es demasiado largo" }));
-
-/** 10 a 72 caracteres (72 es el máximo que admite bcrypt, que usa Supabase Auth). */
-export const passwordSchema = z
-  .string()
-  .min(10, "Usa al menos 10 caracteres")
-  .max(72, "Usa como máximo 72 caracteres");
 
 /** Teléfono: dígitos, espacios, +, paréntesis y guion (mismo patrón que la base de datos). */
 export const phoneSchema = z
@@ -34,10 +31,6 @@ export const loginSchema = z.object({
 });
 
 export const recoverSchema = z.object({ email: emailSchema });
-
-export const newPasswordSchema = z
-  .object({ password: passwordSchema, confirm: z.string() })
-  .refine((v) => v.password === v.confirm, { path: ["confirm"], message: "Las contraseñas no coinciden" });
 
 export const profileSchema = z.object({
   full_name: text(2, 120),
