@@ -9,6 +9,7 @@ const base = {
   telefono: "",
   telefono_secundario: "",
   direccion: "",
+  horario_atencion: "",
   facebook: "",
   horas_limite_pago: "48",
   descuento_transferencia_pct: "0",
@@ -33,6 +34,7 @@ test("lo mínimo es válido y lo vacío queda sin definir", () => {
     telefono: null,
     telefono_secundario: null,
     direccion: null,
+    horario_atencion: null,
     cuentas_bancarias: [account],
     costo_envio: null,
     envio_gratis_desde: null,
@@ -41,6 +43,15 @@ test("lo mínimo es válido y lo vacío queda sin definir", () => {
     umbral_stock_bajo: 5,
     enlaces_redes: {},
   });
+});
+
+test("horario de atención: opcional, una línea de hasta 120 caracteres, solo texto", () => {
+  const ok = parse({ horario_atencion: "  Lunes a viernes, 9:00 a 18:00  " });
+  assert.equal(ok.success && ok.data.horario_atencion, "Lunes a viernes, 9:00 a 18:00");
+  assert.equal(parse({ horario_atencion: "a".repeat(120) }).success, true);
+  assert.match(errors({ horario_atencion: "a".repeat(121) }).horario_atencion, /120/);
+  assert.match(errors({ horario_atencion: "Lunes<script>" }).horario_atencion, /HTML/);
+  assert.match(errors({ horario_atencion: "Lunes" }).horario_atencion, /no permitidos/);
 });
 
 test("plazo de pago: de 1 a 168 horas, entero", () => {

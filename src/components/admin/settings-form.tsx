@@ -78,7 +78,7 @@ export function SettingsForm({ defaults }: { defaults: SettingsDefaults }) {
 
   return (
     <form action={action} className="max-w-3xl space-y-6" noValidate>
-      <Section title="Negocio y contacto" description="El nombre, el correo, el teléfono, la dirección y Facebook se muestran en el pie de la tienda. Solo aparece lo que completes.">
+      <Section title="Negocio y contacto" description="El nombre, el correo, el teléfono, la dirección y Facebook se muestran en el pie de la tienda y en Contacto. Solo aparece lo que completes.">
         <Field label="Nombre del negocio *" name="nombre_negocio" required maxLength={80} value={v.nombre_negocio} onChange={(ev) => set("nombre_negocio", ev.target.value)} error={e.nombre_negocio} />
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Correo de contacto" name="email_contacto" type="email" maxLength={254} value={v.email_contacto} onChange={(ev) => set("email_contacto", ev.target.value)} error={e.email_contacto} />
@@ -88,6 +88,15 @@ export function SettingsForm({ defaults }: { defaults: SettingsDefaults }) {
           <PhoneField label="Teléfono secundario (opcional)" name="telefono_secundario" value={v.telefono_secundario} onChange={(next) => set("telefono_secundario", next)} error={e.telefono_secundario} />
         </div>
         <Field label="Dirección" name="direccion" maxLength={200} value={v.direccion} onChange={(ev) => set("direccion", ev.target.value)} error={e.direccion} />
+        <Field
+          label="Horario de atención"
+          name="horario_atencion"
+          maxLength={120}
+          value={v.horario_atencion}
+          onChange={(ev) => set("horario_atencion", ev.target.value)}
+          error={e.horario_atencion}
+          hint="Opcional, en una línea. Se muestra en la página de contacto; vacío = no se muestra."
+        />
         <Field
           label="Facebook"
           name="facebook"

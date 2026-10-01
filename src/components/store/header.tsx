@@ -34,9 +34,10 @@ export async function Header() {
         <SearchForm />
       </Container>
 
-      {categories.length > 0 && (
-        <nav aria-label="Categorías" className="hidden border-t border-line/70 md:block">
-          <Container>
+      {/* Escritorio: categorías visibles y, al final, Contacto (aunque aún no haya categorías). */}
+      <nav aria-label="Principal" className="hidden border-t border-line/70 md:block">
+        <Container className="flex items-center gap-4">
+          {categories.length > 0 && (
             <ul className="flex flex-wrap items-center gap-x-1">
               {categories.map((cat) => (
                 <li key={cat.id} className="group relative">
@@ -72,9 +73,15 @@ export async function Header() {
                 </li>
               ))}
             </ul>
-          </Container>
-        </nav>
-      )}
+          )}
+          <Link
+            href="/contacto"
+            className="ml-auto flex min-h-11 shrink-0 items-center px-3 text-sm font-semibold text-ink hover:text-accent"
+          >
+            Contacto
+          </Link>
+        </Container>
+      </nav>
     </header>
   );
 }

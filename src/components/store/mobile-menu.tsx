@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Menu, X } from "lucide-react";
 import type { CategoryNode } from "@/types/store";
 
-/** Menú lateral para celular: categorías visibles con sus subcategorías. */
+/** Menú lateral para celular: categorías visibles con sus subcategorías, y Contacto. */
 export function MobileMenu({ categories }: { categories: CategoryNode[] }) {
   const [open, setOpen] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -86,6 +86,11 @@ export function MobileMenu({ categories }: { categories: CategoryNode[] }) {
                   </details>
                 </li>
               ))}
+              <li className="border-t border-line/60">
+                <Link href="/contacto" onClick={close} className="flex min-h-11 items-center px-4 text-sm font-semibold text-ink hover:bg-soft">
+                  Contacto
+                </Link>
+              </li>
             </ul>
           </nav>
         </div>

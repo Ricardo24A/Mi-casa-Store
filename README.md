@@ -24,6 +24,7 @@ Completa `.env.local` (no se sube al repositorio):
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase → Project Settings → API (`anon` o `publishable`) | Pública; la seguridad la dan las políticas RLS |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API (`service_role` o `secret`) | **Solo servidor.** Se salta RLS. Nunca con prefijo `NEXT_PUBLIC_`, ni en el navegador, ni en el repositorio |
 | `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` en local; el dominio real en producción | |
+| `RATE_LIMIT_SECRET` | Una cadena larga al azar (`openssl rand -hex 32`) | **Solo servidor.** Opcional: clave del HMAC del IP para el límite del formulario de contacto; sin ella se usa la clave `service_role` |
 
 ## Base de datos (Supabase)
 
@@ -50,6 +51,7 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 17. `migrations/20260929000017_store_settings_admin.sql`: Configuración. Plazo de pago de 1 a 168 horas, descuento por transferencia de 0 a menos de 100, costo de envío opcional (`null` = "A coordinar"), cuentas bancarias y redes validadas en la base, permisos de `store_settings` solo para el admin con 2FA (columnas editables, sin insert ni delete) y la vista pública `store_public_info` con solo nombre, contacto y redes.
 18. `migrations/20260929000018_store_phones.sql`: teléfono principal y secundario del negocio, normalizados (solo dígitos, formato nacional) y validados para Ecuador (celular 09 + 8 dígitos; fijo 02 a 07 + 7 dígitos; sin repetidos ni secuencias obvias; el secundario no repite al principal ni va solo), y la columna nueva en la vista pública `store_public_info`.
 19. `migrations/20260929000019_order_fulfillment_dashboard.sql`: pedidos enviados y entregados (`admin_mark_shipped` y `admin_mark_delivered`, una función por transición), fechas `pagado_en`, `enviado_en` y `entregado_en`, y los datos del Resumen (`admin_dashboard_summary` y `admin_stock_alerts`, solo para el admin con 2FA).
+20. `migrations/20260929000020_contact_messages.sql`: mensajes de /contacto (`contact_messages`, solo los lee el admin con 2FA; se crean solo con `create_contact_message`, que ejecuta `service_role`, valida todo y limita a 3 mensajes por correo y 10 por IP en una hora), `admin_mark_message_read` y `admin_archive_message`, y el horario de atención opcional en Configuración y en la vista pública `store_public_info`.
 17. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.

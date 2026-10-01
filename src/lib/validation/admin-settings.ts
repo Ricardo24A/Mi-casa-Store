@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { normalizeEcPhone } from "../phone-ec.ts";
 import { text } from "./common.ts";
+import { businessHoursSchema } from "./contact.ts";
 
 const MAX_AMOUNT = 99_999_999.99;
 export const MAX_BANK_ACCOUNTS = 10;
@@ -89,6 +90,7 @@ export const settingsFormSchema = z
     telefono: phone,
     telefono_secundario: phone,
     direccion: optional(text(1, 200)),
+    horario_atencion: businessHoursSchema,
     facebook: facebookUrl,
     horas_limite_pago: required(
       decimal("El plazo", { min: 1, max: MAX_PAYMENT_HOURS, maxDecimals: 0 }),
@@ -134,6 +136,7 @@ export const settingsFormSchema = z
     telefono: v.telefono,
     telefono_secundario: v.telefono_secundario,
     direccion: v.direccion,
+    horario_atencion: v.horario_atencion,
     cuentas_bancarias: v.cuentas,
     costo_envio: v.costo_envio,
     envio_gratis_desde: v.envio_gratis_desde,

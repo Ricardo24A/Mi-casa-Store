@@ -15,7 +15,8 @@ begin;
 update public.store_settings set
   nombre_negocio = 'Mi casa Store', email_contacto = null, telefono = null, telefono_secundario = null,
   direccion = null, cuentas_bancarias = '[]'::jsonb, costo_envio = null, envio_gratis_desde = null,
-  descuento_transferencia_pct = 0, horas_limite_pago = 48, umbral_stock_bajo = 5, enlaces_redes = '{}'::jsonb;
+  descuento_transferencia_pct = 0, horas_limite_pago = 48, umbral_stock_bajo = 5, enlaces_redes = '{}'::jsonb,
+  horario_atencion = null;
 
 -- ---------------------------------------------------------------------------
 -- Línea base: lo que ya hay en la base antes de insertar los datos de prueba.
@@ -1855,7 +1856,7 @@ begin
   -- ---- La vista pública trae SOLO nombre, contacto y redes -------------------------------
   select array_agg(column_name::text order by column_name) into cols
   from information_schema.columns where table_schema = 'public' and table_name = 'store_public_info';
-  assert cols = array['direccion', 'email_contacto', 'enlaces_redes', 'nombre_negocio', 'telefono', 'telefono_secundario'],
+  assert cols = array['direccion', 'email_contacto', 'enlaces_redes', 'horario_atencion', 'nombre_negocio', 'telefono', 'telefono_secundario'],
     'la vista pública solo expone nombre, contacto y redes: ' || coalesce(array_to_string(cols, ','), 'nada');
 
   update public.store_settings
@@ -2254,6 +2255,267 @@ begin
   assert (select estado from public.orders where id = oc) = 'pagado', 'el pedido de prueba sigue pagado';
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- Mensajes de contacto y horario de atención (migración 20)
+-- El correo y la huella de IP se generan al azar en cada corrida y todo se comprueba sobre los
+-- mensajes creados aquí: los mensajes reales que haya en la base no cambian el resultado.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  admin_claims constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}';
+  aal1_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal1"}';
+  cust_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}';
+  run   constant text := replace(gen_random_uuid()::text, '-', '');
+  mail  constant text := 'contacto-' || run || '@test.ec';
+  mail2 constant text := 'otro-' || run || '@test.ec';
+  mail3 constant text := 'viejo-' || run || '@test.ec';
+  ip    constant text := encode(sha256(convert_to('ip-' || run, 'UTF8')), 'hex');
+  ip_viejo constant text := encode(sha256(convert_to('ip-viejo-' || run, 'UTF8')), 'hex');
+  tel   constant text := '0984126739';
+  texto constant text := 'Hola, quisiera saber si hacen envíos a Cuenca.';
+  ghost constant uuid := '41000000-0000-0000-0000-0000000000ff';
+  m1 uuid; m2 uuid; m3 uuid; mx uuid; viejo uuid;
+  n integer;
+  r record;
+  seen text;
+begin
+  -- ---- Crear: solo el servidor (service_role) ejecuta la función ----------------------------------
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin perform public.create_contact_message('Ana', mail, tel, null, texto, true, null); raise exception 'anon no crea mensajes directo';
+  exception when insufficient_privilege then null; end;
+  reset role;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  begin perform public.create_contact_message('Ana', mail, tel, null, texto, true, null); raise exception 'un cliente no crea mensajes directo';
+  exception when insufficient_privilege then null; end;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin perform public.create_contact_message('Ana', mail, tel, null, texto, true, null); raise exception 'ni el admin crea mensajes directo';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  set local role service_role;
+  m1 := public.create_contact_message('Ana Prueba', mail, tel, 'Envíos', texto, true, ip);
+  m2 := public.create_contact_message('Ana Prueba', mail, tel, '', texto, true, ip);
+  m3 := public.create_contact_message('Ana Prueba', mail, '042345678', null, E'Primera línea\n\tsegunda línea del mensaje', true, ip);
+  -- Ni el servidor lee la tabla directo: solo crea por la función
+  begin perform 1 from public.contact_messages; raise exception 'service_role no lee la tabla directo';
+  exception when insufficient_privilege then null; end;
+  begin perform public.admin_mark_message_read(m1); raise exception 'service_role no cambia estados';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  select * into r from public.contact_messages where id = m1;
+  assert r.estado = 'nuevo' and r.leido_en is null, 'un mensaje nace nuevo y sin leer';
+  assert r.aceptado_en is not null, 'guarda cuándo aceptó el tratamiento de datos';
+  assert r.asunto = 'Envíos' and r.telefono = tel and r.ip_hash = ip, 'guarda los datos tal cual';
+  assert (select asunto from public.contact_messages where id = m2) is null, 'un asunto vacío queda en null';
+  assert (select mensaje from public.contact_messages where id = m3) = E'Primera línea\n\tsegunda línea del mensaje',
+    'el mensaje admite saltos de línea y tabuladores';
+
+  -- ---- La función rechaza datos inválidos (y no guarda nada) ---------------------------------------
+  set local role service_role;
+  n := 0;
+  for r in
+    select * from (values
+      ('A',                  mail2, tel,             null::text,       texto,                                  true,  null::text,      'nombre_invalido'),
+      ('<b>Ana</b>',         mail2, tel,             null,             texto,                                  true,  null,            'nombre_invalido'),
+      (E'Ana\nPrueba',       mail2, tel,             null,             texto,                                  true,  null,            'nombre_invalido'),
+      (' Ana',               mail2, tel,             null,             texto,                                  true,  null,            'nombre_invalido'),
+      (repeat('a', 121),     mail2, tel,             null,             texto,                                  true,  null,            'nombre_invalido'),
+      (null,                 mail2, tel,             null,             texto,                                  true,  null,            'nombre_invalido'),
+      ('Ana',                'sin-arroba.ec', tel,   null,             texto,                                  true,  null,            'email_invalido'),
+      ('Ana',                'ana@correo', tel,      null,             texto,                                  true,  null,            'email_invalido'),
+      ('Ana',                'ana..b@test.ec', tel,  null,             texto,                                  true,  null,            'email_invalido'),
+      ('Ana',                repeat('a', 65) || '@test.ec', tel, null, texto,                                  true,  null,            'email_invalido'),
+      ('Ana',                '<x>@test.ec', tel,     null,             texto,                                  true,  null,            'email_invalido'),
+      ('Ana',                mail2, '0812345678',    null,             texto,                                  true,  null,            'telefono_invalido'),
+      ('Ana',                mail2, '+593984126739', null,             texto,                                  true,  null,            'telefono_invalido'),
+      ('Ana',                mail2, '0999999999',    null,             texto,                                  true,  null,            'telefono_invalido'),
+      ('Ana',                mail2, null,            null,             texto,                                  true,  null,            'telefono_invalido'),
+      ('Ana',                mail2, tel,             repeat('a', 121), texto,                                  true,  null,            'asunto_invalido'),
+      ('Ana',                mail2, tel,             '<script>',       texto,                                  true,  null,            'asunto_invalido'),
+      ('Ana',                mail2, tel,             null,             'corto',                                true,  null,            'mensaje_invalido'),
+      ('Ana',                mail2, tel,             null,             repeat('a', 1001),                      true,  null,            'mensaje_invalido'),
+      ('Ana',                mail2, tel,             null,             '<script>alert(1)</script> hola',       true,  null,            'mensaje_invalido'),
+      ('Ana',                mail2, tel,             null,             'Hola ' || chr(7) || ' qué tal amigos', true,  null,            'mensaje_invalido'),
+      ('Ana',                mail2, tel,             null,             '  con espacios al borde  ',            true,  null,            'mensaje_invalido'),
+      ('Ana',                mail2, tel,             null,             null,                                   true,  null,            'mensaje_invalido'),
+      ('Ana',                mail2, tel,             null,             texto,                                  false, null,            'aceptacion_requerida'),
+      ('Ana',                mail2, tel,             null,             texto,                                  null,  null,            'aceptacion_requerida'),
+      ('Ana',                mail2, tel,             null,             texto,                                  true,  'no-es-un-hash', 'ip_invalido')
+    ) as t(nombre, email, telefono, asunto, mensaje, acepta, ip_hash, esperado)
+  loop
+    begin
+      perform public.create_contact_message(r.nombre, r.email, r.telefono, r.asunto, r.mensaje, r.acepta, r.ip_hash);
+      raise exception 'debía rechazarse con %', r.esperado;
+    exception when raise_exception then
+      assert sqlerrm = r.esperado, 'esperaba ' || r.esperado || ' y llegó: ' || sqlerrm;
+    end;
+    n := n + 1;
+  end loop;
+  reset role;
+  assert n = 26, 'se probaron todos los casos inválidos';
+  assert (select count(*) from public.contact_messages where lower(email) = lower(mail2)) = 0, 'los rechazados no se guardan';
+
+  -- ---- Límite por correo: 3 en una hora, sin distinguir mayúsculas ---------------------------------
+  set local role service_role;
+  begin
+    perform public.create_contact_message('Ana Prueba', upper(mail), tel, null, texto, true, null);
+    raise exception 'el cuarto mensaje del mismo correo en una hora debía rechazarse';
+  exception when raise_exception then assert sqlerrm = 'limite_mensajes', 'límite por correo: ' || sqlerrm; end;
+  reset role;
+  assert (select count(*) from public.contact_messages where lower(email) = lower(mail)) = 3, 'el correo queda con 3 mensajes';
+
+  -- Lo de hace más de una hora no cuenta
+  insert into public.contact_messages (nombre, email, telefono, mensaje, aceptado_en, created_at)
+  select 'Viejo', mail3, tel, texto, now() - interval '2 hours', now() - interval '2 hours' from generate_series(1, 3);
+  set local role service_role;
+  mx := public.create_contact_message('Viejo', mail3, tel, null, texto, true, null);
+  reset role;
+  assert mx is not null, 'los mensajes de hace más de una hora no cuentan para el límite';
+
+  -- ---- Límite por IP: 10 en una hora (3 ya usados arriba) -------------------------------------------
+  set local role service_role;
+  for i in 1..7 loop
+    perform public.create_contact_message('Ana Prueba', 'ip' || i || '-' || mail, tel, null, texto, true, ip);
+  end loop;
+  begin
+    perform public.create_contact_message('Ana Prueba', 'ip-extra-' || mail, tel, null, texto, true, ip);
+    raise exception 'el mensaje 11 del mismo IP en una hora debía rechazarse';
+  exception when raise_exception then assert sqlerrm = 'limite_mensajes', 'límite por IP: ' || sqlerrm; end;
+  -- Sin IP (desarrollo local) solo cuenta el correo
+  mx := public.create_contact_message('Ana Prueba', 'sin-ip-' || mail, tel, null, texto, true, null);
+  reset role;
+  assert mx is not null, 'sin IP se aplica solo el límite por correo';
+  assert (select count(*) from public.contact_messages where ip_hash = ip) = 10, 'el IP queda con 10 mensajes';
+
+  -- La huella del IP no se guarda más de un día
+  insert into public.contact_messages (nombre, email, telefono, mensaje, aceptado_en, created_at, ip_hash)
+  values ('Viejo', 'ip-viejo-' || mail, tel, texto, now() - interval '2 days', now() - interval '2 days', ip_viejo)
+  returning id into viejo;
+  set local role service_role;
+  perform public.create_contact_message('Ana Prueba', 'limpieza-' || mail, tel, null, texto, true, null);
+  reset role;
+  assert (select ip_hash from public.contact_messages where id = viejo) is null, 'la huella de IP de hace más de un día se borra';
+
+  -- ---- Lectura: anónimo, cliente y admin sin 2FA no ven ni editan; el admin con 2FA solo lee --------
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin perform 1 from public.contact_messages; raise exception 'anon no lee mensajes';
+  exception when insufficient_privilege then null; end;
+  begin insert into public.contact_messages (nombre, email, telefono, mensaje, aceptado_en) values ('Xx', mail2, tel, texto, now());
+    raise exception 'anon no inserta mensajes';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  assert (select count(*) from public.contact_messages where id in (m1, m2, m3)) = 0, 'un cliente no ve mensajes';
+  begin insert into public.contact_messages (nombre, email, telefono, mensaje, aceptado_en) values ('Xx', mail2, tel, texto, now());
+    raise exception 'un cliente no inserta mensajes';
+  exception when insufficient_privilege then null; end;
+  begin update public.contact_messages set estado = 'leido', leido_en = now() where id = m1; raise exception 'un cliente no edita mensajes';
+  exception when insufficient_privilege then null; end;
+  begin delete from public.contact_messages where id = m1; raise exception 'un cliente no borra mensajes';
+  exception when insufficient_privilege then null; end;
+
+  perform set_config('request.jwt.claims', aal1_claims, true);
+  assert (select count(*) from public.contact_messages where id in (m1, m2, m3)) = 0, 'un admin sin 2FA no ve mensajes';
+  begin update public.contact_messages set estado = 'leido', leido_en = now() where id = m1; raise exception 'un admin sin 2FA no edita mensajes';
+  exception when insufficient_privilege then null; end;
+
+  perform set_config('request.jwt.claims', admin_claims, true);
+  assert (select count(*) from public.contact_messages where id in (m1, m2, m3)) = 3, 'el admin con 2FA ve los mensajes';
+  select email into seen from public.contact_messages where id = m1;
+  assert seen = mail, 'el admin con 2FA lee los datos';
+  begin insert into public.contact_messages (nombre, email, telefono, mensaje, aceptado_en) values ('Xx', mail2, tel, texto, now());
+    raise exception 'ni el admin inserta mensajes directo';
+  exception when insufficient_privilege then null; end;
+  begin update public.contact_messages set estado = 'leido', leido_en = now() where id = m1; raise exception 'ni el admin edita mensajes directo';
+  exception when insufficient_privilege then null; end;
+  begin delete from public.contact_messages where id = m1; raise exception 'ni el admin borra mensajes directo';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  -- ---- Cambios de estado: solo el admin con 2FA y solo desde el estado que corresponde --------------
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin perform public.admin_mark_message_read(m1); raise exception 'anon no marca leído';
+  exception when insufficient_privilege then null; end;
+  begin perform public.admin_archive_message(m1); raise exception 'anon no archiva';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  begin perform public.admin_mark_message_read(m1); raise exception 'un cliente no marca leído';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'leído cliente: ' || sqlerrm; end;
+  begin perform public.admin_archive_message(m1); raise exception 'un cliente no archiva';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'archivar cliente: ' || sqlerrm; end;
+  perform set_config('request.jwt.claims', aal1_claims, true);
+  begin perform public.admin_mark_message_read(m1); raise exception 'un admin sin 2FA no marca leído';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'leído aal1: ' || sqlerrm; end;
+  begin perform public.admin_archive_message(m1); raise exception 'un admin sin 2FA no archiva';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'archivar aal1: ' || sqlerrm; end;
+  reset role;
+  assert (select estado from public.contact_messages where id = m1) = 'nuevo', 'los intentos no autorizados no cambian nada';
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin perform public.admin_mark_message_read(ghost); raise exception 'mensaje inexistente';
+  exception when raise_exception then assert sqlerrm = 'mensaje_no_encontrado', 'inexistente: ' || sqlerrm; end;
+  begin perform public.admin_archive_message(ghost); raise exception 'mensaje inexistente al archivar';
+  exception when raise_exception then assert sqlerrm = 'mensaje_no_encontrado', 'archivar inexistente: ' || sqlerrm; end;
+  assert public.admin_mark_message_read(m1) = 'leido', 'marcar leído';
+  begin perform public.admin_mark_message_read(m1); raise exception 'marcar leído dos veces';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'leído dos veces: ' || sqlerrm; end;
+  assert public.admin_archive_message(m1) = 'archivado', 'archivar uno leído';
+  begin perform public.admin_archive_message(m1); raise exception 'archivar dos veces';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'archivar dos veces: ' || sqlerrm; end;
+  begin perform public.admin_mark_message_read(m1); raise exception 'un archivado no vuelve a leído';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'leído un archivado: ' || sqlerrm; end;
+  assert public.admin_archive_message(m2) = 'archivado', 'archivar uno nuevo';
+  reset role;
+  select * into r from public.contact_messages where id = m1;
+  assert r.estado = 'archivado' and r.leido_en is not null, 'el leído archivado conserva su fecha de lectura';
+  select * into r from public.contact_messages where id = m2;
+  assert r.estado = 'archivado' and r.leido_en is not null, 'archivar uno nuevo lo da por leído';
+  assert (select estado from public.contact_messages where id = m3) = 'nuevo', 'los demás no cambian';
+
+  -- La tabla no admite estados ni fechas incoherentes (aunque se escriba directo como superusuario)
+  begin update public.contact_messages set estado = 'otro' where id = m3; raise exception 'estado desconocido';
+  exception when check_violation then null; end;
+  begin update public.contact_messages set estado = 'leido' where id = m3; raise exception 'leído sin fecha de lectura';
+  exception when check_violation then null; end;
+
+  -- ---- Horario de atención: validación en la base, Configuración y vista pública -------------------
+  begin update public.store_settings set horario_atencion = repeat('a', 121); raise exception 'horario de más de 120';
+  exception when check_violation then null; end;
+  begin update public.store_settings set horario_atencion = '<b>Lunes</b>'; raise exception 'horario con HTML';
+  exception when check_violation then null; end;
+  begin update public.store_settings set horario_atencion = E'Lunes\nmartes'; raise exception 'horario en dos líneas';
+  exception when check_violation then null; end;
+  begin update public.store_settings set horario_atencion = ''; raise exception 'horario vacío (debe ser null)';
+  exception when check_violation then null; end;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  update public.store_settings set horario_atencion = 'Lunes a viernes, 9:00 a 18:00' where id;
+  get diagnostics n = row_count;
+  assert n = 1, 'el admin con 2FA guarda el horario';
+  perform set_config('request.jwt.claims', cust_claims, true);
+  update public.store_settings set horario_atencion = 'Cliente' where id;
+  get diagnostics n = row_count;
+  assert n = 0, 'un cliente no cambia el horario';
+  reset role;
+
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  select horario_atencion into seen from public.store_public_info;
+  assert seen = 'Lunes a viernes, 9:00 a 18:00', 'el público lee el horario por la vista';
+  reset role;
+end $$;
 rollback;
 
 select 'RLS OK' as resultado;

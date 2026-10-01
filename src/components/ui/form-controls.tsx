@@ -82,6 +82,42 @@ export function SelectField({
   );
 }
 
+/** Área de texto con etiqueta, ayuda y error. El error se anuncia además de la ayuda (ambos en aria-describedby). */
+export function TextareaField({
+  label,
+  hint,
+  error,
+  className,
+  ...props
+}: FieldExtras & ComponentProps<"textarea">) {
+  const id = props.id ?? props.name;
+  const describedBy = [hint ? `${id}-hint` : null, error ? `${id}-error` : null].filter(Boolean).join(" ") || undefined;
+  return (
+    <div className={className}>
+      <label htmlFor={id} className="mb-1 block text-sm font-semibold text-ink">
+        {label}
+      </label>
+      <textarea
+        id={id}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy}
+        {...props}
+        className={cn(inputClass, "min-h-36 resize-y leading-relaxed")}
+      />
+      {hint && (
+        <div id={`${id}-hint`} className="mt-1 text-sm text-ink-soft">
+          {hint}
+        </div>
+      )}
+      {error && (
+        <p id={`${id}-error`} className="mt-1 text-sm text-sale-ink">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Mensaje de error de un formulario. `role="alert"` para que lo lea el lector de pantalla. */
 export function FormError({ children }: { children?: ReactNode }) {
   if (!children) return null;

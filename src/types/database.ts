@@ -149,10 +149,28 @@ export interface StoreSettings {
   email_contacto: string | null;
   telefono: string | null;
   direccion: string | null;
+  horario_atencion: string | null;
   cuentas_bancarias: BankAccount[];
   costo_envio: number;
   envio_gratis_desde: number | null;
   descuento_transferencia_pct: number;
   horas_limite_pago: number;
   updated_at: string;
+}
+
+export type ContactMessageStatus = "nuevo" | "leido" | "archivado";
+
+/** Mensaje de /contacto. Solo lo lee el administrador con 2FA (migración 20). */
+export interface ContactMessage {
+  id: string;
+  nombre: string;
+  email: string;
+  /** Solo dígitos, formato nacional (celular 09… o fijo 02 a 07). */
+  telefono: string;
+  asunto: string | null;
+  mensaje: string;
+  aceptado_en: string;
+  estado: ContactMessageStatus;
+  created_at: string;
+  leido_en: string | null;
 }

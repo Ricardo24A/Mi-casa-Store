@@ -24,6 +24,8 @@ export interface DashboardData {
   /** Pendientes de pago, el que vence primero arriba. */
   expiring: OrderRow[];
   latest: OrderRow[];
+  /** Mensajes de contacto sin leer; null si no se pudieron contar (el resto del Resumen sigue). */
+  newMessages: number | null;
 }
 
 const ORDER_COLUMNS = "referencia, estado, total, created_at, vence_en, contacto_nombre";
@@ -35,7 +37,7 @@ const ORDER_COLUMNS = "referencia, estado, total, created_at, vence_en, contacto
  */
 export async function getDashboardData(): Promise<DashboardData | null> {
   const supabase = await createClient();
-  const [summary, stock, toReview, expiring, latest] = await Promise.all([
+  const [summary, stock, toReview, expiring, latest, messages] = await Promise.all([
     supabase.rpc("admin_dashboard_summary"),
     supabase.rpc("admin_stock_alerts", { p_limit: 8 }),
     supabase
@@ -53,6 +55,7 @@ export async function getDashboardData(): Promise<DashboardData | null> {
       .limit(5)
       .returns<OrderRow[]>(),
     supabase.from("orders").select(ORDER_COLUMNS).order("created_at", { ascending: false }).limit(8).returns<OrderRow[]>(),
+    supabase.from("contact_messages").select("id", { count: "exact", head: true }).eq("estado", "nuevo"),
   ]);
 
   const parsedSummary = summarySchema.safeParse(summary.data);
@@ -66,5 +69,6 @@ export async function getDashboardData(): Promise<DashboardData | null> {
     toReview: (toReview.data ?? []).map((o) => ({ ...o, total: Number(o.total) })),
     expiring: (expiring.data ?? []).map((o) => ({ ...o, total: Number(o.total) })),
     latest: (latest.data ?? []).map((o) => ({ ...o, total: Number(o.total) })),
+    newMessages: messages.error ? null : (messages.count ?? 0),
   };
 }

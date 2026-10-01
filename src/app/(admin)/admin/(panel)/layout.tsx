@@ -9,14 +9,14 @@ import { createClient } from "@/lib/supabase/server";
 // en cada navegación.
 async function PanelFrame({ children }: { children: ReactNode }) {
   const { fullName } = await requireAdmin();
-  // Pedidos con comprobante por revisar (RLS: el administrador con 2FA ve todos los pedidos).
+  // Pedidos con comprobante por revisar y mensajes sin leer (RLS: solo el administrador con 2FA los ve).
   const supabase = await createClient();
-  const { count } = await supabase
-    .from("orders")
-    .select("id", { count: "exact", head: true })
-    .eq("estado", "comprobante_recibido");
+  const [orders, messages] = await Promise.all([
+    supabase.from("orders").select("id", { count: "exact", head: true }).eq("estado", "comprobante_recibido"),
+    supabase.from("contact_messages").select("id", { count: "exact", head: true }).eq("estado", "nuevo"),
+  ]);
   return (
-    <AdminShell fullName={fullName} pendingOrders={count ?? 0}>
+    <AdminShell fullName={fullName} counters={{ pedidos: orders.count ?? 0, mensajes: messages.count ?? 0 }}>
       {children}
     </AdminShell>
   );

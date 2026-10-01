@@ -21,7 +21,7 @@ async function CurrentYear() {
   return <>{new Date().getFullYear()}</>;
 }
 
-/** Solo enlaces a páginas que existen. Los demás (contacto, legales) se añaden cuando existan. */
+/** Solo enlaces a páginas que existen. Los demás (legales) se añaden cuando existan. */
 export async function Footer() {
   const [categories, info] = await Promise.all([getCategoryTree(), getPublicStoreInfo()]);
   const phones = [info.telefono, info.telefonoSecundario].filter((p): p is string => Boolean(p));
@@ -79,6 +79,11 @@ export async function Footer() {
             <li>
               <Link href="/carrito" className={linkClass}>
                 Carrito
+              </Link>
+            </li>
+            <li>
+              <Link href="/contacto" className={linkClass}>
+                Contacto
               </Link>
             </li>
           </ul>

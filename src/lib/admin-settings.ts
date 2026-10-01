@@ -7,6 +7,7 @@ export interface SettingsDefaults {
   telefono: string;
   telefono_secundario: string;
   direccion: string;
+  horario_atencion: string;
   facebook: string;
   horas_limite_pago: string;
   descuento_transferencia_pct: string;
@@ -24,7 +25,7 @@ export async function getSettingsDefaults(): Promise<SettingsDefaults | null> {
   const { data } = await supabase
     .from("store_settings")
     .select(
-      "nombre_negocio, email_contacto, telefono, telefono_secundario, direccion, cuentas_bancarias, costo_envio, envio_gratis_desde, descuento_transferencia_pct, horas_limite_pago, umbral_stock_bajo, enlaces_redes",
+      "nombre_negocio, email_contacto, telefono, telefono_secundario, direccion, horario_atencion, cuentas_bancarias, costo_envio, envio_gratis_desde, descuento_transferencia_pct, horas_limite_pago, umbral_stock_bajo, enlaces_redes",
     )
     .maybeSingle();
   if (!data) return null;
@@ -38,6 +39,7 @@ export async function getSettingsDefaults(): Promise<SettingsDefaults | null> {
     telefono: data.telefono ? formatEcPhone(data.telefono) : "",
     telefono_secundario: data.telefono_secundario ? formatEcPhone(data.telefono_secundario) : "",
     direccion: data.direccion ?? "",
+    horario_atencion: data.horario_atencion ?? "",
     facebook: typeof redes.facebook === "string" ? redes.facebook : "",
     horas_limite_pago: show(data.horas_limite_pago),
     descuento_transferencia_pct: show(data.descuento_transferencia_pct),

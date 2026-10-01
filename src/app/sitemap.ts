@@ -9,6 +9,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   return [
     { url: `${base}/` },
     { url: `${base}/catalogo` },
+    { url: `${base}/contacto` },
     ...tree.flatMap((cat) => [
       { url: `${base}/categoria/${cat.slug}` },
       ...cat.subcategorias.map((sub) => ({ url: `${base}/categoria/${sub.slug}` })),

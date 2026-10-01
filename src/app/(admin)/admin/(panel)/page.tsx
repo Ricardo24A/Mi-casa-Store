@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AlertTriangle, ClipboardList, PackageX, Plus, Truck } from "lucide-react";
+import { AlertTriangle, ClipboardList, Inbox, PackageX, Plus, Truck } from "lucide-react";
 import { OrderStatusBadge } from "@/components/orders/status-badge";
 import { buttonClass } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -97,7 +97,7 @@ export default async function ResumenPage() {
     );
   }
 
-  const { summary, stock, toReview, expiring, latest } = data;
+  const { summary, stock, toReview, expiring, latest, newMessages } = data;
   const states = summary.estados;
   const totalOrders = Object.values(states).reduce((a, b) => a + b, 0);
   const toReviewCount = countIn(states, "comprobante_recibido");
@@ -186,6 +186,24 @@ export default async function ResumenPage() {
               </Link>
             )}
           </div>
+        </div>
+
+        <div className={cn(card, "mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3")}>
+          <p className="flex items-center gap-2 text-ink">
+            <Inbox className="size-4 text-ink-soft" aria-hidden />
+            {newMessages === null ? (
+              <span className="text-sm text-ink-soft">No pudimos contar los mensajes de contacto.</span>
+            ) : newMessages === 0 ? (
+              <span className="text-sm text-ink-soft">No tienes mensajes de contacto nuevos.</span>
+            ) : (
+              <span className="font-semibold">
+                {newMessages} {newMessages === 1 ? "mensaje de contacto nuevo" : "mensajes de contacto nuevos"}
+              </span>
+            )}
+          </p>
+          <Link href="/admin/mensajes" className={link}>
+            Ver mensajes
+          </Link>
         </div>
       </section>
 

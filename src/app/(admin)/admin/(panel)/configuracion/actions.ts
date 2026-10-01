@@ -20,6 +20,7 @@ const FIELDS = [
   "telefono",
   "telefono_secundario",
   "direccion",
+  "horario_atencion",
   "facebook",
   "horas_limite_pago",
   "descuento_transferencia_pct",
@@ -47,6 +48,9 @@ function dbError(error: { message: string }): SettingsFormState {
   }
   if (m.includes("store_settings_telefono_valido")) {
     return { error: "Revisa los datos marcados.", fieldErrors: { telefono: "Revisa el teléfono principal." } };
+  }
+  if (m.includes("store_settings_horario_valido")) {
+    return { error: "Revisa los datos marcados.", fieldErrors: { horario_atencion: "Escribe el horario en una línea, solo texto." } };
   }
   if (m.includes("store_settings_cuentas_validas")) return { error: "Revisa los datos de las cuentas bancarias." };
   if (m.includes("store_settings_redes_validas")) {

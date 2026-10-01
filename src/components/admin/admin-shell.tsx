@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { BadgePercent, ClipboardList, FolderTree, LayoutDashboard, LogOut, Menu, Package, Settings, X, type LucideIcon } from "lucide-react";
+import { BadgePercent, ClipboardList, FolderTree, Inbox, LayoutDashboard, LogOut, Menu, Package, Settings, X, type LucideIcon } from "lucide-react";
 import { cerrarSesion } from "@/app/(admin)/admin/actions";
 import { clearCartOnSignOut } from "@/lib/cart-store";
 import { cn } from "@/lib/utils";
@@ -14,9 +14,20 @@ interface NavItem {
   icon: LucideIcon;
   /** Solo activo con la ruta exacta (Resumen no debe quedar activo en las demás). */
   exact?: boolean;
-  /** Contador que se muestra junto al nombre (p. ej. pedidos por revisar). */
-  badge?: "pedidos";
+  /** Contador que se muestra junto al nombre (pedidos por revisar, mensajes sin leer). */
+  badge?: keyof Counters;
 }
+
+/** Contadores del menú. */
+export interface Counters {
+  pedidos: number;
+  mensajes: number;
+}
+
+const BADGE_LABEL: Record<keyof Counters, string> = {
+  pedidos: "por revisar",
+  mensajes: "sin leer",
+};
 
 /**
  * Solo hay enlaces a pantallas que existen. Cada sección nueva se agrega aquí junto con su página.
@@ -27,18 +38,19 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/admin/categorias", label: "Categorías", icon: FolderTree },
   { href: "/admin/descuentos", label: "Descuentos", icon: BadgePercent },
   { href: "/admin/pedidos", label: "Pedidos", icon: ClipboardList, badge: "pedidos" },
+  { href: "/admin/mensajes", label: "Mensajes", icon: Inbox, badge: "mensajes" },
   { href: "/admin/configuracion", label: "Configuración", icon: Settings },
 ];
 
 function SidebarContent({
   fullName,
-  pendingOrders,
+  counters,
   onNavigate,
   closeRef,
   onClose,
 }: {
   fullName: string | null;
-  pendingOrders: number;
+  counters: Counters;
   onNavigate?: () => void;
   closeRef?: React.Ref<HTMLButtonElement>;
   onClose?: () => void;
@@ -68,6 +80,7 @@ function SidebarContent({
         <ul className="space-y-1">
           {NAV_ITEMS.map((item) => {
             const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
+            const count = item.badge ? counters[item.badge] : 0;
             return (
               <li key={item.href}>
                 <Link
@@ -81,10 +94,12 @@ function SidebarContent({
                 >
                   <item.icon className="size-5" strokeWidth={1.75} aria-hidden />
                   {item.label}
-                  {item.badge === "pedidos" && pendingOrders > 0 && (
+                  {item.badge && count > 0 && (
                     <span className="ml-auto inline-flex min-w-6 items-center justify-center rounded-full bg-bg px-2 text-xs font-semibold leading-6 text-accent-hover">
-                      <span aria-hidden>{pendingOrders > 99 ? "99+" : pendingOrders}</span>
-                      <span className="sr-only">{pendingOrders} por revisar</span>
+                      <span aria-hidden>{count > 99 ? "99+" : count}</span>
+                      <span className="sr-only">
+                        {count} {BADGE_LABEL[item.badge]}
+                      </span>
                     </span>
                   )}
                 </Link>
@@ -113,11 +128,11 @@ function SidebarContent({
 /** Marco del panel: menú lateral fijo en escritorio y cajón en móvil. */
 export function AdminShell({
   fullName,
-  pendingOrders = 0,
+  counters = { pedidos: 0, mensajes: 0 },
   children,
 }: {
   fullName: string | null;
-  pendingOrders?: number;
+  counters?: Counters;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -141,7 +156,7 @@ export function AdminShell({
   return (
     <div className="min-h-dvh lg:pl-64">
       <aside className="on-dark fixed inset-y-0 left-0 hidden w-64 flex-col bg-accent-hover text-bg lg:flex">
-        <SidebarContent fullName={fullName} pendingOrders={pendingOrders} />
+        <SidebarContent fullName={fullName} counters={counters} />
       </aside>
 
       <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-line bg-bg px-4 py-2 lg:hidden">
@@ -163,7 +178,7 @@ export function AdminShell({
           <aside className="on-dark absolute inset-y-0 left-0 flex w-[85%] max-w-72 flex-col bg-accent-hover text-bg">
             <SidebarContent
               fullName={fullName}
-              pendingOrders={pendingOrders}
+              counters={counters}
               closeRef={closeRef}
               onClose={() => setOpen(false)}
               onNavigate={() => setOpen(false)}
