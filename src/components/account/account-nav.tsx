@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
 import { LogOut } from "lucide-react";
 import { cerrarSesionCliente } from "@/app/(tienda)/cuenta/actions";
 import { clearCartOnSignOut } from "@/lib/cart-store";
@@ -13,11 +14,30 @@ const ITEMS = [
   { href: "/cuenta/direcciones", label: "Direcciones" },
 ];
 
+/**
+ * Pestañas de Mi cuenta. En celular, si no caben, se desplazan en horizontal sin barra visible.
+ * `overflow-x-auto` obliga al navegador a poner también `overflow-y: auto`, y cualquier píxel de más
+ * (el borde de la pestaña activa, un anillo de foco) mostraba una mini barra vertical: por eso
+ * `overflow-y-hidden`, y un relleno de 4 px alrededor (el anillo de foco mide 2 px + 2 px de
+ * separación) para que el foco no se recorte. La pestaña activa se lleva a la vista al cambiar de página.
+ */
 export function AccountNav() {
   const pathname = usePathname();
+  const navRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    navRef.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [pathname]);
+
   return (
-    <nav aria-label="Mi cuenta" className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-      <ul className="flex items-center gap-1 border-b border-line">
+    <nav
+      ref={navRef}
+      aria-label="Mi cuenta"
+      // Con el teclado, la pestaña (o "Salir") que recibe el foco se desplaza a la vista.
+      onFocus={(event) => event.target.scrollIntoView({ block: "nearest", inline: "nearest" })}
+      className="-mx-4 overflow-x-auto overflow-y-hidden px-4 py-1 [scrollbar-width:none] sm:-mx-1 sm:px-1 [&::-webkit-scrollbar]:hidden"
+    >
+      <ul className="flex w-max min-w-full items-center gap-1 border-b border-line">
         {ITEMS.map((item) => {
           const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
           return (

@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { cacheLife } from "next/cache";
 import { Suspense } from "react";
-import { FacebookIcon } from "@/components/store/facebook-icon";
-import { WhatsappIcon } from "@/components/store/whatsapp-icon";
+import { BrandLink } from "@/components/brand-icons";
 import { Container } from "@/components/ui/container";
 import { getCategoryTree } from "@/lib/catalog";
 import { formatEcPhone, telHref, whatsappHref } from "@/lib/phone-ec";
@@ -43,17 +42,7 @@ export async function Footer() {
                     <a href={telHref(phone)} className={linkClass}>
                       {formatEcPhone(phone)}
                     </a>
-                    {wa && (
-                      <a
-                        href={wa}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label={`WhatsApp ${formatEcPhone(phone)}`}
-                        className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg hover:bg-accent hover:text-bg"
-                      >
-                        <WhatsappIcon className="size-5" />
-                      </a>
-                    )}
+                    {wa && <BrandLink brand="whatsapp" href={wa} label={`WhatsApp ${formatEcPhone(phone)}`} className="hover:bg-accent" />}
                   </p>
                 );
               })}
@@ -113,17 +102,7 @@ export async function Footer() {
             </Suspense>{" "}
             {info.nombre}. Todos los derechos reservados.
           </p>
-          {info.facebook && (
-            <a
-              href={info.facebook}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`Facebook de ${info.nombre}`}
-              className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg hover:bg-accent hover:text-bg"
-            >
-              <FacebookIcon className="size-5" />
-            </a>
-          )}
+          {info.facebook && <BrandLink brand="facebook" href={info.facebook} className="hover:bg-accent" />}
         </Container>
       </div>
     </footer>

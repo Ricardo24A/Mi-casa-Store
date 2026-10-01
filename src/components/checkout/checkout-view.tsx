@@ -32,6 +32,10 @@ export interface SavedAddress {
 type Loaded = { key: string; products: StoreProduct[] } | { key: string; error: true };
 const NEW_ADDRESS = "nueva";
 
+/** Enlace junto al botón de confirmar: área táctil de 44 px, centrado cuando va apilado en celular. */
+const actionLink =
+  "inline-flex min-h-11 items-center justify-center px-2 text-sm font-semibold text-accent underline-offset-4 hover:underline";
+
 export function CheckoutView({
   fullName,
   phone,
@@ -216,35 +220,31 @@ export function CheckoutView({
           {e.address && <p className="text-sm text-sale-ink">{e.address}</p>}
         </section>
 
+        {/* Primero los avisos; debajo, el botón principal y el enlace que ayuda a resolver el aviso,
+            separados 16 px (apilados en celular, con el botón primero). */}
         <div className="space-y-3">
           <FormError>{result?.error}</FormError>
-          {result?.code === "stock" && (
-            <Link href="/carrito" className="inline-flex min-h-11 items-center text-sm font-semibold text-accent hover:underline">
-              Revisar mi carrito
-            </Link>
-          )}
-          {result?.code === "cuenta" && (
-            <Link href="/cuenta" className="inline-flex min-h-11 items-center text-sm font-semibold text-accent hover:underline">
-              Ver mis pedidos
-            </Link>
-          )}
-          <button type="submit" disabled={pending || unavailable || !canPay} className={buttonClass("primary", "lg", "w-full sm:w-auto")}>
-            {pending ? "Creando pedido…" : "Confirmar pedido"}
-          </button>
           {!canPay && (
             <p role="alert" className="text-sm text-sale-ink">
               Por ahora no podemos recibir pedidos en línea. Inténtalo más tarde.
             </p>
           )}
-          {unavailable && (
-            <p className="text-sm text-sale-ink">
-              Hay productos sin stock suficiente.{" "}
-              <Link href="/carrito" className="font-semibold underline">
-                Revisa tu carrito
+          {unavailable && <p className="text-sm text-sale-ink">Hay productos sin stock suficiente.</p>}
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <button type="submit" disabled={pending || unavailable || !canPay} className={buttonClass("primary", "lg", "w-full sm:w-auto")}>
+              {pending ? "Creando pedido…" : "Confirmar pedido"}
+            </button>
+            {(result?.code === "stock" || unavailable) && (
+              <Link href="/carrito" className={actionLink}>
+                Revisar mi carrito
               </Link>
-              .
-            </p>
-          )}
+            )}
+            {result?.code === "cuenta" && (
+              <Link href="/cuenta" className={actionLink}>
+                Ver mis pedidos
+              </Link>
+            )}
+          </div>
         </div>
       </form>
 

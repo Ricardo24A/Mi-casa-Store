@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Clock, Mail, MapPin, Phone } from "lucide-react";
 import { ContactForm } from "@/components/store/contact-form";
-import { FacebookIcon } from "@/components/store/facebook-icon";
-import { WhatsappIcon } from "@/components/store/whatsapp-icon";
+import { BrandIcon, BrandLink } from "@/components/brand-icons";
 import { Container } from "@/components/ui/container";
 import { formatEcPhone, telHref, whatsappHref } from "@/lib/phone-ec";
 import { getPublicStoreInfo } from "@/lib/store-info";
@@ -57,17 +56,7 @@ export default async function ContactPage() {
                       <a href={telHref(phone)} className={link}>
                         {formatEcPhone(phone)}
                       </a>
-                      {wa && (
-                        <a
-                          href={wa}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label={`Escribir por WhatsApp al ${formatEcPhone(phone)}`}
-                          className="inline-flex size-11 items-center justify-center rounded-lg text-accent hover:bg-accent-soft"
-                        >
-                          <WhatsappIcon className="size-5" />
-                        </a>
-                      )}
+                      {wa && <BrandLink brand="whatsapp" href={wa} label={`WhatsApp ${formatEcPhone(phone)}`} className="hover:bg-accent-soft" />}
                     </span>
                   </Item>
                 );
@@ -90,7 +79,7 @@ export default async function ContactPage() {
                 </Item>
               )}
               {info.facebook && (
-                <Item icon={<FacebookIcon className="size-5" />} label="Facebook">
+                <Item icon={<BrandIcon brand="facebook" size={20} />} label="Facebook">
                   <a href={info.facebook} target="_blank" rel="noopener noreferrer" className={link}>
                     {info.nombre} en Facebook
                   </a>

@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { Mail, Phone } from "lucide-react";
 import { MessageActions } from "@/components/admin/message-actions";
 import { MessageStatusBadge } from "@/components/admin/message-status";
-import { WhatsappIcon } from "@/components/store/whatsapp-icon";
+import { BrandIcon } from "@/components/brand-icons";
 import { buttonClass } from "@/components/ui/button";
 import { requireAdmin } from "@/lib/auth";
 import { formatEcPhone, telHref, whatsappHref } from "@/lib/phone-ec";
@@ -67,13 +67,24 @@ export default async function MessageDetailPage(props: PageProps<"/admin/mensaje
         {message.leido_en && ` · Leído el ${dateFormat.format(new Date(message.leido_en))}`}
       </p>
 
-      <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
-        <section aria-labelledby="texto" className="rounded-card border border-line bg-surface p-5">
+      {/* items-start: cada columna mide lo suyo; sin él, la tarjeta del mensaje se estiraba hasta la
+          altura de la columna lateral aunque el texto fuera corto. */}
+      <div className="mt-8 grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <section aria-labelledby="texto" className="min-w-0 rounded-card border border-line bg-surface p-5">
           <h2 id="texto" className="mb-3 text-xl font-semibold text-ink">
             Mensaje de {message.nombre}
           </h2>
-          {/* Texto plano: React lo escapa; los saltos de línea se respetan con CSS, sin HTML. */}
-          <p className="whitespace-pre-wrap break-words leading-relaxed text-ink">{message.mensaje}</p>
+          {/* Texto plano: React lo escapa; los saltos de línea se respetan con CSS, sin HTML. Hasta 1000
+              caracteres: si no cabe en 28rem se desplaza dentro de la tarjeta (enfocable con el teclado).
+              Las palabras muy largas (enlaces, cadenas sin espacios) se cortan para no desbordar. */}
+          <div
+            tabIndex={0}
+            role="region"
+            aria-label={`Texto del mensaje de ${message.nombre}`}
+            className="max-h-[28rem] overflow-y-auto rounded-lg"
+          >
+            <p className="whitespace-pre-wrap leading-relaxed text-ink [overflow-wrap:anywhere]">{message.mensaje}</p>
+          </div>
         </section>
 
         <div className="space-y-6">
@@ -99,7 +110,7 @@ export default async function MessageDetailPage(props: PageProps<"/admin/mensaje
             </a>
             {wa && (
               <a href={wa} target="_blank" rel="noopener noreferrer" className={buttonClass("secondary", "lg", "w-full gap-2")}>
-                <WhatsappIcon className="size-4" />
+                <BrandIcon brand="whatsapp" size={20} />
                 Escribir por WhatsApp
               </a>
             )}
