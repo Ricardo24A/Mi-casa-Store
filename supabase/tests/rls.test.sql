@@ -1252,6 +1252,7 @@ begin
   reset role;
   assert r = 'pagado', 'devuelve el nuevo estado';
   assert (select estado from public.orders where id = oa) = 'pagado', 'el pedido queda pagado';
+  assert (select pagado_en from public.orders where id = oa) is not null, 'aprobar guarda la fecha de pago';
   assert (select estado from public.payment_proofs where id = pa) = 'aprobado', 'el comprobante queda aprobado';
   assert (select revisado_por from public.payment_proofs where id = pa) = '00000000-0000-0000-0000-0000000000a1', 'queda quién lo revisó';
   assert (select reserva_activa from public.orders where id = oa) = false, 'la reserva se consumió';
@@ -2081,6 +2082,176 @@ begin
   reset role;
 
   update public.store_settings set telefono = null, telefono_secundario = null;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Envío y entrega de pedidos, y datos del Resumen (migración 19)
+-- Todo se compara contra el valor de ANTES (la base puede tener pedidos y productos reales).
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  admin_claims constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}';
+  aal1_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal1"}';
+  cust_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}';
+  cat constant uuid := '10000000-0000-0000-0000-000000000001';
+  oa constant uuid := '31000000-0000-0000-0000-0000000000a1';  -- pagado ahora
+  ob constant uuid := '31000000-0000-0000-0000-0000000000a2';  -- entregado ahora
+  oc constant uuid := '31000000-0000-0000-0000-0000000000a3';  -- pagado hace mucho
+  od constant uuid := '31000000-0000-0000-0000-0000000000a4';  -- cancelado
+  oe constant uuid := '31000000-0000-0000-0000-0000000000a5';  -- pendiente
+  ghost constant uuid := '31000000-0000-0000-0000-0000000000ff';
+  s0 jsonb; s1 jsonb; a0 jsonb; a1 jsonb;
+begin
+  -- ---- Resumen: ventas y pedidos por estado --------------------------------------------------
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  s0 := public.admin_dashboard_summary();
+  reset role;
+
+  insert into public.orders (id, contacto_nombre, contacto_email, contacto_telefono, subtotal, total, vence_en, estado, pagado_en) values
+    (oa, 'N', 'n@test.ec', '0999999999', 40, 40, now() + interval '1 day', 'pagado',    now()),
+    (ob, 'N', 'n@test.ec', '0999999999', 10, 10, now() + interval '1 day', 'entregado', now()),
+    (oc, 'N', 'n@test.ec', '0999999999', 99, 99, now() + interval '1 day', 'pagado',    now() - interval '400 days');
+  insert into public.orders (id, contacto_nombre, contacto_email, contacto_telefono, subtotal, total, vence_en, estado) values
+    (od, 'N', 'n@test.ec', '0999999999', 5, 5, now() + interval '1 day', 'cancelado'),
+    (oe, 'N', 'n@test.ec', '0999999999', 7, 7, now() + interval '1 day', 'pendiente_pago');
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  s1 := public.admin_dashboard_summary();
+  reset role;
+
+  assert (s1 #>> '{hoy,pedidos}')::integer = (s0 #>> '{hoy,pedidos}')::integer + 2, 'hoy: cuenta pagado y entregado de ahora';
+  assert (s1 #>> '{hoy,total}')::numeric = (s0 #>> '{hoy,total}')::numeric + 50, 'hoy: suma 40 + 10, sin el cancelado ni el pendiente ni el de hace mucho';
+  assert (s1 #>> '{mes,pedidos}')::integer = (s0 #>> '{mes,pedidos}')::integer + 2, 'mes: igual que hoy para lo de ahora';
+  assert (s1 #>> '{mes,total}')::numeric = (s0 #>> '{mes,total}')::numeric + 50, 'mes: el pagado de hace 400 días no cuenta';
+  assert coalesce((s1 #>> '{estados,pagado}')::integer, 0) = coalesce((s0 #>> '{estados,pagado}')::integer, 0) + 2, 'estados: pagado';
+  assert coalesce((s1 #>> '{estados,entregado}')::integer, 0) = coalesce((s0 #>> '{estados,entregado}')::integer, 0) + 1, 'estados: entregado';
+  assert coalesce((s1 #>> '{estados,cancelado}')::integer, 0) = coalesce((s0 #>> '{estados,cancelado}')::integer, 0) + 1, 'estados: cancelado';
+  assert coalesce((s1 #>> '{estados,pendiente_pago}')::integer, 0) = coalesce((s0 #>> '{estados,pendiente_pago}')::integer, 0) + 1, 'estados: pendiente';
+
+  -- Solo el administrador con 2FA
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  begin perform public.admin_dashboard_summary(); raise exception 'un cliente no ve el resumen';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'resumen cliente: ' || sqlerrm; end;
+  begin perform public.admin_stock_alerts(); raise exception 'un cliente no ve las alertas';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'alertas cliente: ' || sqlerrm; end;
+  perform set_config('request.jwt.claims', aal1_claims, true);
+  begin perform public.admin_dashboard_summary(); raise exception 'un admin sin 2FA no ve el resumen';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'resumen aal1: ' || sqlerrm; end;
+  begin perform public.admin_stock_alerts(); raise exception 'un admin sin 2FA no ve las alertas';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'alertas aal1: ' || sqlerrm; end;
+  reset role;
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin perform public.admin_dashboard_summary(); raise exception 'anon no ve el resumen';
+  exception when insufficient_privilege then null; end;
+  begin perform public.admin_stock_alerts(); raise exception 'anon no ve las alertas';
+  exception when insufficient_privilege then null; end;
+  begin perform public.admin_mark_shipped(oa); raise exception 'anon no marca enviado';
+  exception when insufficient_privilege then null; end;
+  begin perform public.admin_mark_delivered(oa); raise exception 'anon no marca entregado';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  -- ---- Alertas de stock (el umbral se fija aquí; la configuración real vuelve con el ROLLBACK) ----
+  update public.store_settings set umbral_stock_bajo = 5;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  a0 := public.admin_stock_alerts(50);
+  reset role;
+  assert (a0 ->> 'umbral')::integer = 5, 'las alertas usan el umbral de Configuración';
+
+  insert into public.products (id, category_id, nombre, slug, precio, stock, stock_reservado, activo) values
+    ('20000000-0000-0000-0000-0000000000e1', cat, 'Alerta agotado',          'al-agotado',   10, 0,  0, true),
+    ('20000000-0000-0000-0000-0000000000e2', cat, 'Alerta poco',             'al-poco',      10, 3,  0, true),
+    ('20000000-0000-0000-0000-0000000000e3', cat, 'Alerta poco reservado',   'al-reservado', 10, 10, 8, true),
+    ('20000000-0000-0000-0000-0000000000e4', cat, 'Alerta suficiente',       'al-ok',        10, 20, 0, true),
+    ('20000000-0000-0000-0000-0000000000e5', cat, 'Alerta inactivo agotado', 'al-inactivo',  10, 0,  0, false),
+    ('20000000-0000-0000-0000-0000000000e6', cat, 'Alerta justo en umbral',  'al-umbral',    10, 5,  0, true),
+    ('20000000-0000-0000-0000-0000000000e7', cat, 'Alerta sobre el umbral',  'al-sobre',     10, 6,  0, true);
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  a1 := public.admin_stock_alerts(50);
+  reset role;
+  assert (a1 #>> '{agotados,total}')::integer = (a0 #>> '{agotados,total}')::integer + 1, 'agotados: solo el activo con stock 0';
+  assert (a1 #>> '{poco,total}')::integer = (a0 #>> '{poco,total}')::integer + 3,
+    'poco stock: 3 con 3 disponibles, 2 disponibles (10 menos 8 reservadas) y justo el umbral; no el de 6 ni el de 20';
+  assert jsonb_array_length(a1 #> '{poco,items}') <= 50 and jsonb_array_length(a1 #> '{agotados,items}') <= 50, 'respeta el límite';
+  assert (select count(*) from jsonb_array_elements(a1 #> '{poco,items}') e
+          where (e ->> 'id')::uuid in ('20000000-0000-0000-0000-0000000000e4', '20000000-0000-0000-0000-0000000000e7')) = 0,
+    'los que tienen stock suficiente no salen';
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  assert jsonb_array_length(public.admin_stock_alerts(1) #> '{poco,items}') <= 1, 'con límite 1 trae como máximo uno';
+  assert jsonb_array_length(public.admin_stock_alerts(0) #> '{poco,items}') <= 1, 'un límite menor que 1 se toma como 1';
+  reset role;
+
+  -- ---- Marcar enviado / entregado -----------------------------------------------------------------
+  -- No autorizados no cambian nada
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  begin perform public.admin_mark_shipped(oa); raise exception 'un cliente no marca enviado';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'enviado cliente: ' || sqlerrm; end;
+  perform set_config('request.jwt.claims', aal1_claims, true);
+  begin perform public.admin_mark_shipped(oa); raise exception 'un admin sin 2FA no marca enviado';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'enviado aal1: ' || sqlerrm; end;
+  begin perform public.admin_mark_delivered(ob); raise exception 'un admin sin 2FA no marca entregado';
+  exception when raise_exception then assert sqlerrm = 'no_autorizado', 'entregado aal1: ' || sqlerrm; end;
+  reset role;
+  assert (select estado from public.orders where id = oa) = 'pagado', 'los intentos no autorizados no cambian el estado';
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+
+  -- Solo desde el estado que corresponde
+  begin perform public.admin_mark_shipped(ghost); raise exception 'pedido inexistente';
+  exception when raise_exception then assert sqlerrm = 'pedido_no_encontrado', 'inexistente: ' || sqlerrm; end;
+  begin perform public.admin_mark_delivered(oa); raise exception 'no se entrega lo que no se envió';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'entregar un pagado: ' || sqlerrm; end;
+  begin perform public.admin_mark_shipped(oe); raise exception 'no se envía lo pendiente de pago';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'enviar un pendiente: ' || sqlerrm; end;
+  begin perform public.admin_mark_shipped(od); raise exception 'no se envía lo cancelado';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'enviar un cancelado: ' || sqlerrm; end;
+  begin perform public.admin_mark_shipped(ob); raise exception 'no se envía lo ya entregado';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'enviar un entregado: ' || sqlerrm; end;
+  begin perform public.admin_mark_delivered(oe); raise exception 'no se entrega lo pendiente de pago';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'entregar un pendiente: ' || sqlerrm; end;
+
+  -- Camino normal
+  assert public.admin_mark_shipped(oa) = 'enviado', 'marcar enviado';
+  reset role;
+  assert (select estado from public.orders where id = oa) = 'enviado', 'el pedido queda enviado';
+  assert (select enviado_en from public.orders where id = oa) is not null, 'con su fecha de envío';
+  assert (select entregado_en from public.orders where id = oa) is null, 'sin fecha de entrega todavía';
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin perform public.admin_mark_shipped(oa); raise exception 'enviar dos veces';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'enviar dos veces: ' || sqlerrm; end;
+  assert public.admin_mark_delivered(oa) = 'entregado', 'marcar entregado';
+  reset role;
+  assert (select estado from public.orders where id = oa) = 'entregado', 'el pedido queda entregado';
+  assert (select entregado_en from public.orders where id = oa) is not null, 'con su fecha de entrega';
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin perform public.admin_mark_delivered(oa); raise exception 'entregar dos veces';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'entregar dos veces: ' || sqlerrm; end;
+  begin perform public.admin_mark_shipped(oa); raise exception 'no se vuelve atrás';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'enviar un entregado: ' || sqlerrm; end;
+
+  -- Nada cambia el estado con UPDATE directo, ni las fechas nuevas
+  begin update public.orders set estado = 'enviado' where id = oc; raise exception 'el estado no se cambia con UPDATE';
+  exception when insufficient_privilege then null; end;
+  begin update public.orders set pagado_en = now() where id = oc; raise exception 'pagado_en no es editable por la API';
+  exception when insufficient_privilege then null; end;
+  begin update public.orders set enviado_en = now() where id = oc; raise exception 'enviado_en no es editable por la API';
+  exception when insufficient_privilege then null; end;
+  begin update public.orders set entregado_en = now() where id = oc; raise exception 'entregado_en no es editable por la API';
+  exception when insufficient_privilege then null; end;
+  reset role;
+  assert (select estado from public.orders where id = oc) = 'pagado', 'el pedido de prueba sigue pagado';
 end $$;
 
 rollback;

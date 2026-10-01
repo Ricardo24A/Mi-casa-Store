@@ -111,3 +111,29 @@ export async function cancelarPedido(_prev: OrderActionState, formData: FormData
   if (error) return { error: DB_ERRORS[error.message] ?? GENERIC_ERROR };
   return done("Pedido cancelado. Se liberó el stock reservado.");
 }
+
+const idField = z.object({ orderId: uuid });
+
+/** Pagado -> enviado. La función de base de datos bloquea el pedido y verifica el estado anterior. */
+export async function marcarEnviado(_prev: OrderActionState, formData: FormData): Promise<OrderActionState> {
+  await requireAdmin();
+  const parsed = idField.safeParse({ orderId: str(formData, "orderId") });
+  if (!parsed.success) return { error: "No encontramos el pedido." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("admin_mark_shipped", { p_order_id: parsed.data.orderId });
+  if (error) return { error: DB_ERRORS[error.message] ?? GENERIC_ERROR };
+  return done("Pedido marcado como enviado.");
+}
+
+/** Enviado -> entregado. */
+export async function marcarEntregado(_prev: OrderActionState, formData: FormData): Promise<OrderActionState> {
+  await requireAdmin();
+  const parsed = idField.safeParse({ orderId: str(formData, "orderId") });
+  if (!parsed.success) return { error: "No encontramos el pedido." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("admin_mark_delivered", { p_order_id: parsed.data.orderId });
+  if (error) return { error: DB_ERRORS[error.message] ?? GENERIC_ERROR };
+  return done("Pedido marcado como entregado.");
+}

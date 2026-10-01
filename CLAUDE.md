@@ -110,6 +110,7 @@ Las plantillas ya existen en `prototipos/cliente/src/data/index.ts` (`presetProd
 - Configuración: datos del negocio, cuentas bancarias para transferencia, costo y regla de envío, porcentaje de descuento por transferencia, tiempo límite para pagar.
   Reglas: todo vacío es "sin definir" y la tienda funciona sin ello (nada de cifras inventadas). Costo de envío vacío = "A coordinar" (0 = gratis a propósito); "envío gratis desde" exige costo de envío. Plazo de pago de 1 a 168 horas (aplica a pedidos nuevos). Descuento por transferencia de 0 a menos de 100. Sin cuentas bancarias el checkout no deja pagar ni crea pedidos. Las cuentas y reglas de cobro no son públicas: las lee solo el servidor (`getCheckoutSettings`); lo único público es nombre, contacto y Facebook del pie por la vista `store_public_info` (`getPublicStoreInfo`, etiqueta de caché `tienda`). Las URLs de redes deben ser https. Teléfonos del negocio (principal y secundario opcional): se guardan normalizados, solo dígitos y en formato nacional (celular de 10 dígitos `09` + 8, fijo de 9 dígitos con código `02` a `07`), con la misma regla en Zod (`src/lib/phone-ec.ts`) y en la base (`valid_ec_phone`); se muestran como `099 123 4567` / `(04) 234 5678`, el enlace `tel:` usa `+593` sin el 0 y un celular lleva además el icono de WhatsApp (`wa.me/593…`) en el pie. Esta regla es solo del negocio: el teléfono del comprador tiene la suya, más flexible.
 - Panel resumen: ventas recientes, pedidos por revisar, productos con poco stock.
+  El Resumen (`/admin`) lee todo de la base de datos con `admin_dashboard_summary` y `admin_stock_alerts` (solo admin con 2FA): comprobantes por revisar y pendientes de pago con enlace a cada pedido, pagados por enviar, ventas de hoy y del mes (hora de Ecuador; solo pedidos pagado, enviado o entregado, por `pagado_en`) con su ticket promedio (sin pedidos no se muestra), pedidos por estado, productos agotados (stock 0) y con poco stock (disponible = stock menos reservado, menor o igual que el umbral de Configuración) y los últimos pedidos. Sin datos, estados vacíos; nunca cifras inventadas.
 
 ### Prototipo del dashboard (Lovable): qué tomar y qué cambiar
 
@@ -205,6 +206,8 @@ Estructura: header, hero simple, categorías (solo las que tienen productos), "M
 | Rechazar el pedido (`admin_reject_order`) | `comprobante_recibido` | `rechazado` | libera la reserva |
 | Rechazar el comprobante (`admin_reject_proof`) | `comprobante_recibido` | `pendiente_pago` con plazo **nuevo** | conserva la reserva |
 | Aprobar (`admin_approve_order`) | `comprobante_recibido` | `pagado` | descuenta el stock y consume la reserva |
+| Marcar enviado (`admin_mark_shipped`) | `pagado` | `enviado` | sin cambio (la reserva ya se consumió al aprobar) |
+| Marcar entregado (`admin_mark_delivered`) | `enviado` | `entregado` | sin cambio |
 
 `orders.reserva_activa` indica si el pedido tiene unidades reservadas: se libera o consume una sola vez, así que aprobar o liberar dos veces el mismo pedido es imposible. Un pedido con comprobante en revisión no vence: lo resuelve el dueño.
 

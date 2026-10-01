@@ -46,6 +46,9 @@ interface Order {
   total: number;
   motivo_estado: string | null;
   vence_en: string;
+  pagado_en: string | null;
+  enviado_en: string | null;
+  entregado_en: string | null;
   created_at: string;
   order_items: { nombre: string; precio_unitario: number; cantidad: number }[];
   payment_proofs: Proof[];
@@ -70,7 +73,7 @@ export default async function OrderDetailPage(props: PageProps<"/admin/pedidos/[
   const { data: order } = await supabase
     .from("orders")
     .select(
-      "id, referencia, estado, contacto_nombre, contacto_email, contacto_telefono, direccion_envio, subtotal, descuento, descuento_transferencia, envio, total, motivo_estado, vence_en, created_at, order_items(nombre, precio_unitario, cantidad), payment_proofs(id, archivo, hash, estado, motivo, created_at, revisado_en)",
+      "id, referencia, estado, contacto_nombre, contacto_email, contacto_telefono, direccion_envio, subtotal, descuento, descuento_transferencia, envio, total, motivo_estado, vence_en, pagado_en, enviado_en, entregado_en, created_at, order_items(nombre, precio_unitario, cantidad), payment_proofs(id, archivo, hash, estado, motivo, created_at, revisado_en)",
     )
     .eq("referencia", referencia.data)
     .maybeSingle<Order>();
@@ -119,6 +122,13 @@ export default async function OrderDetailPage(props: PageProps<"/admin/pedidos/[
         {(order.estado === "pendiente_pago" || order.estado === "comprobante_recibido") &&
           ` · Plazo para pagar: ${dateFormat.format(new Date(order.vence_en))}`}
       </p>
+      {(order.pagado_en || order.enviado_en || order.entregado_en) && (
+        <ul className="mt-1 space-y-0.5 text-sm text-ink-soft">
+          {order.pagado_en && <li>Pago aprobado el {dateFormat.format(new Date(order.pagado_en))}</li>}
+          {order.enviado_en && <li>Enviado el {dateFormat.format(new Date(order.enviado_en))}</li>}
+          {order.entregado_en && <li>Entregado el {dateFormat.format(new Date(order.entregado_en))}</li>}
+        </ul>
+      )}
       {order.motivo_estado && (
         <p className="mt-3 rounded-lg bg-sale-soft px-3 py-2 text-sm text-sale-ink">Motivo: {order.motivo_estado}</p>
       )}

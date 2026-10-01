@@ -1,13 +1,16 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import {
   aprobarPedido,
   cancelarPedido,
+  marcarEntregado,
+  marcarEnviado,
   rechazarComprobante,
   rechazarPedido,
   type OrderActionState,
 } from "@/app/(admin)/admin/(panel)/pedidos/actions";
+import { buttonClass } from "@/components/ui/button";
 import { FormError, FormSuccess, SubmitButton, inputClass } from "@/components/ui/form-controls";
 
 const initial: OrderActionState = {};
@@ -62,6 +65,49 @@ function ReasonForm({
         </SubmitButton>
       </form>
     </details>
+  );
+}
+
+/**
+ * Un paso del envío (enviado o entregado) con confirmación: el primer botón solo pide confirmar; el
+ * cambio ocurre al confirmar. La base de datos verifica el estado anterior, así que un doble clic o
+ * una pantalla desactualizada falla sin cambiar nada.
+ */
+function FulfillmentStep({
+  orderId,
+  action,
+  button,
+  question,
+  confirm,
+}: {
+  orderId: string;
+  action: (prev: OrderActionState, formData: FormData) => Promise<OrderActionState>;
+  button: string;
+  question: string;
+  confirm: string;
+}) {
+  const [state, formAction] = useActionState(action, initial);
+  const [asking, setAsking] = useState(false);
+  return (
+    <div className="space-y-3 rounded-card border border-line bg-surface p-4">
+      {!asking ? (
+        <button type="button" onClick={() => setAsking(true)} className={buttonClass("primary", "lg", "w-full")}>
+          {button}
+        </button>
+      ) : (
+        <form action={formAction} className="space-y-3" noValidate>
+          <input type="hidden" name="orderId" value={orderId} />
+          <p role="alertdialog" aria-label={button} className="text-sm text-ink">
+            {question}
+          </p>
+          <SubmitButton pendingLabel="Guardando…">{confirm}</SubmitButton>
+          <button type="button" onClick={() => setAsking(false)} className={buttonClass("secondary", "lg", "w-full")}>
+            Volver
+          </button>
+        </form>
+      )}
+      <Result state={state} />
+    </div>
   );
 }
 
@@ -131,6 +177,30 @@ export function OrderActions({
         hidden={{ orderId }}
         button="Cancelar pedido"
         danger
+      />
+    );
+  }
+
+  if (status === "pagado") {
+    return (
+      <FulfillmentStep
+        orderId={orderId}
+        action={marcarEnviado}
+        button="Marcar enviado"
+        question="¿Ya entregaste el paquete a la empresa de transporte o lo enviaste al cliente? Esto no se puede deshacer."
+        confirm="Sí, marcar enviado"
+      />
+    );
+  }
+
+  if (status === "enviado") {
+    return (
+      <FulfillmentStep
+        orderId={orderId}
+        action={marcarEntregado}
+        button="Marcar entregado"
+        question="¿El cliente ya recibió el pedido? Esto no se puede deshacer."
+        confirm="Sí, marcar entregado"
       />
     );
   }
