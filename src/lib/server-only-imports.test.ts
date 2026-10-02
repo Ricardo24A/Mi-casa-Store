@@ -13,6 +13,8 @@ const SERVER_ONLY = [
   "@/lib/recovery-cookie",
   "@/lib/verify-password",
   "@/lib/password-change",
+  "@/lib/email/mailer",
+  "@/lib/email/notify",
 ];
 
 function files(dir: string): string[] {
@@ -33,7 +35,7 @@ test("ningún componente de cliente importa módulos con secretos del servidor",
 });
 
 test("los módulos con secretos llevan server-only", () => {
-  for (const file of ["src/lib/server-env.ts", "src/lib/supabase/admin.ts", "src/lib/hmac.ts", "src/lib/rate-limit.ts"]) {
+  for (const file of ["src/lib/server-env.ts", "src/lib/supabase/admin.ts", "src/lib/hmac.ts", "src/lib/rate-limit.ts", "src/lib/email/mailer.ts", "src/lib/email/notify.ts"]) {
     assert.match(readFileSync(file, "utf8"), /^import "server-only";/m, file);
   }
   assert.doesNotMatch(readFileSync("src/lib/env.ts", "utf8"), /SERVICE_ROLE/, "env.ts (que llega al proxy) no toca la clave de servicio");

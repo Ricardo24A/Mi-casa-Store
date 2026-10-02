@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getAdminSession } from "@/lib/auth";
+import { notifyProofUploaded } from "@/lib/email/notify";
 import { checkRateLimits } from "@/lib/rate-limit";
 import { rateLimitMessage } from "@/lib/rate-limit-core";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -103,6 +104,9 @@ export async function subirComprobante(referencia: unknown, formData: FormData):
   const row = Array.isArray(data) ? data[0] : data;
   const anterior: string | null = row?.o_archivo_anterior ?? null;
   if (anterior) await admin.storage.from(BUCKET).remove([anterior]);
+
+  // El comprobante ya está guardado: avisos al cliente y al dueño con after(), sin esperar ni poder romper nada.
+  if (typeof row?.o_proof_id === "string") notifyProofUploaded(order.id, row.o_proof_id);
 
   revalidatePath("/cuenta");
   revalidatePath(`/confirmacion/${ref.data}`);

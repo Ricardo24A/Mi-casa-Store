@@ -1,6 +1,7 @@
 "use server";
 
 import { clientIpHash } from "@/lib/client-ip";
+import { notifyOwnerContactMessage } from "@/lib/email/notify";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifyTurnstile } from "@/lib/turnstile";
 import { fieldErrors } from "@/lib/validation/account";
@@ -57,7 +58,7 @@ export async function enviarMensaje(_prev: ContactFormState, formData: FormData)
   if (!(await verifyTurnstile(formData.get("cf-turnstile-response")))) return { error: CAPTCHA_ERROR };
 
   const m = parsed.data;
-  const { error } = await createAdminClient().rpc("create_contact_message", {
+  const { data: messageId, error } = await createAdminClient().rpc("create_contact_message", {
     p_nombre: m.nombre,
     p_email: m.email,
     p_telefono: m.telefono,
@@ -72,5 +73,8 @@ export async function enviarMensaje(_prev: ContactFormState, formData: FormData)
     if (field) return { error: CHECK_ERROR, fieldErrors: { [field[0]]: field[1] } };
     return { error: GENERIC_ERROR };
   }
+  // Solo se llega aquí si la base aceptó el mensaje (ya pasó los límites por correo e IP): a lo sumo
+  // un aviso al dueño por mensaje guardado.
+  if (typeof messageId === "string") notifyOwnerContactMessage(messageId, { nombre: m.nombre, asunto: m.asunto, mensaje: m.mensaje });
   return { ok: true };
 }

@@ -6,7 +6,8 @@ import { cartLineStatus, lineNotice } from "@/lib/cart-status";
 import { CHECKOUT_GENERIC_ERROR, checkoutErrorFromDb, type CheckoutErrorCode } from "@/lib/checkout-errors";
 import { readCartLines } from "@/lib/cart-server";
 import { getProductsByIds } from "@/lib/catalog";
-import { computeOrderTotals } from "@/lib/order-totals";
+import { notifyOrderCreated } from "@/lib/email/notify";
+import { computeOrderTotals, shippingToArrange } from "@/lib/order-totals";
 import { checkRateLimits } from "@/lib/rate-limit";
 import { rateLimitMessage } from "@/lib/rate-limit-core";
 import { getCheckoutSettings } from "@/lib/store-settings";
@@ -193,6 +194,24 @@ export async function crearPedido(input: unknown): Promise<CheckoutResult> {
   if (error) return { ok: false, ...checkoutErrorFromDb(error.message) };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.o_referencia) return { ok: false, error: GENERIC_ERROR };
+
+  // El pedido ya está guardado: el correo se programa con after() y nunca puede romper este flujo.
+  notifyOrderCreated({
+    referencia: row.o_referencia as string,
+    items: lines.map((l) => ({ nombre: l.product.nombre, cantidad: l.cantidad, precioUnitario: l.product.precioFinal })),
+    subtotal: totals.subtotal,
+    descuento: totals.descuento,
+    descuentoTransferencia: totals.descuento_transferencia,
+    envio: totals.envio,
+    envioPorCoordinar: shippingToArrange(settings),
+    total: totals.total,
+    direccion: {
+      destinatario: shipping.destinatario ?? nombre,
+      direccion: shipping.direccion ?? "",
+      ciudad: shipping.ciudad ?? "",
+      provincia: shipping.provincia ?? "",
+    },
+  });
 
   return { ok: true, referencia: row.o_referencia as string };
 }

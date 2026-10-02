@@ -3,6 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
+import {
+  notifyOrderCancelled,
+  notifyOrderShipped,
+  notifyPaymentApproved,
+  notifyProofRejected,
+} from "@/lib/email/notify";
 import { createClient } from "@/lib/supabase/server";
 import { text, uuid } from "@/lib/validation/common";
 
@@ -60,6 +66,7 @@ export async function aprobarPedido(_prev: OrderActionState, formData: FormData)
     p_proof_id: parsed.data.proofId,
   });
   if (error) return { error: DB_ERRORS[error.message] ?? GENERIC_ERROR };
+  notifyPaymentApproved(parsed.data.orderId);
   return done("Pago aprobado. Se descontó el stock.");
 }
 
@@ -81,6 +88,7 @@ export async function rechazarComprobante(_prev: OrderActionState, formData: For
     p_motivo: parsed.data.motivo,
   });
   if (error) return { error: DB_ERRORS[error.message] ?? GENERIC_ERROR };
+  notifyProofRejected(parsed.data.orderId, parsed.data.proofId, parsed.data.motivo);
   return done("Comprobante rechazado. El cliente puede subir otro y tiene un plazo nuevo.");
 }
 
@@ -109,6 +117,7 @@ export async function cancelarPedido(_prev: OrderActionState, formData: FormData
     p_motivo: parsed.data.motivo,
   });
   if (error) return { error: DB_ERRORS[error.message] ?? GENERIC_ERROR };
+  notifyOrderCancelled(parsed.data.orderId, parsed.data.motivo);
   return done("Pedido cancelado. Se liberó el stock reservado.");
 }
 
@@ -123,6 +132,7 @@ export async function marcarEnviado(_prev: OrderActionState, formData: FormData)
   const supabase = await createClient();
   const { error } = await supabase.rpc("admin_mark_shipped", { p_order_id: parsed.data.orderId });
   if (error) return { error: DB_ERRORS[error.message] ?? GENERIC_ERROR };
+  notifyOrderShipped(parsed.data.orderId);
   return done("Pedido marcado como enviado.");
 }
 

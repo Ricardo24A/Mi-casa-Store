@@ -2744,6 +2744,138 @@ begin
   exception when check_violation then null; end;
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- Registro de correos (migración 22). Todo se compara sobre filas creadas aquí, con claves al azar:
+-- los registros reales que haya no cambian el resultado.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  admin_claims constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}';
+  aal1_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal1"}';
+  cust_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}';
+  run constant text := replace(gen_random_uuid()::text, '-', '');
+  h1 constant text := encode(sha256(convert_to('h1-' || run, 'UTF8')), 'hex');
+  h2 constant text := encode(sha256(convert_to('h2-' || run, 'UTF8')), 'hex');
+  ref constant text := 'MC-' || run;
+  a uuid; b uuid; c uuid; d uuid; e uuid; stale uuid;
+  n integer;
+begin
+  -- ---- Permisos: nadie escribe ni llama a las funciones salvo service_role ---------------------------
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin perform 1 from public.email_log; raise exception 'anon no lee email_log';
+  exception when insufficient_privilege then null; end;
+  begin perform public.email_log_claim('prueba_a', ref, h1, 'a***@b***.com'); raise exception 'anon no reclama';
+  exception when insufficient_privilege then null; end;
+  begin perform public.email_log_finish(gen_random_uuid(), 'enviado', null); raise exception 'anon no marca resultados';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  begin perform public.email_log_claim('prueba_a', ref, h1, 'a***@b***.com'); raise exception 'un cliente no reclama';
+  exception when insufficient_privilege then null; end;
+  begin perform public.email_log_finish(gen_random_uuid(), 'enviado', null); raise exception 'un cliente no marca resultados';
+  exception when insufficient_privilege then null; end;
+  begin insert into public.email_log (tipo, referencia_id, destinatario_hash, destinatario_mascara, estado)
+    values ('prueba_a', ref, h1, 'a***@b***.com', 'enviado'); raise exception 'un cliente no escribe';
+  exception when insufficient_privilege then null; end;
+  begin update public.email_log set estado = 'enviado'; raise exception 'un cliente no edita';
+  exception when insufficient_privilege then null; end;
+  begin delete from public.email_log; raise exception 'un cliente no borra';
+  exception when insufficient_privilege then null; end;
+  begin perform public.cleanup_email_log(); raise exception 'un cliente no limpia';
+  exception when insufficient_privilege then null; end;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin perform public.email_log_claim('prueba_a', ref, h1, 'a***@b***.com'); raise exception 'ni el admin reclama por la API';
+  exception when insufficient_privilege then null; end;
+  begin insert into public.email_log (tipo, referencia_id, destinatario_hash, destinatario_mascara, estado)
+    values ('prueba_a', ref, h1, 'a***@b***.com', 'enviado'); raise exception 'ni el admin escribe';
+  exception when insufficient_privilege then null; end;
+  begin delete from public.email_log; raise exception 'ni el admin borra';
+  exception when insufficient_privilege then null; end;
+  begin perform public.cleanup_email_log(); raise exception 'ni el admin limpia';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  set local role service_role;
+  begin perform 1 from public.email_log; raise exception 'service_role no toca la tabla directo';
+  exception when insufficient_privilege then null; end;
+  begin perform public.cleanup_email_log(); raise exception 'service_role no limpia';
+  exception when insufficient_privilege then null; end;
+
+  -- ---- Reclamar: el primero gana, el repetido recibe null --------------------------------------------
+  a := public.email_log_claim('prueba_a', ref, h1, 'a***@b***.com');
+  assert a is not null, 'el primer reclamo devuelve un id';
+  assert public.email_log_claim('prueba_a', ref, h1, 'a***@b***.com') is null, 'el mismo evento y destinatario es un duplicado';
+  assert public.email_log_claim('prueba_a', ref, h1, 'otra***@b***.com') is null, 'cambiar la máscara no evita el duplicado';
+  b := public.email_log_claim('prueba_a', ref, h2, 'c***@d***.com');
+  assert b is not null, 'otro destinatario del mismo evento es otro reclamo';
+  c := public.email_log_claim('prueba_b', ref, h1, 'a***@b***.com');
+  assert c is not null, 'otro tipo de correo del mismo pedido es otro reclamo';
+  d := public.email_log_claim('prueba_a', ref || '-2', h1, 'a***@b***.com');
+  assert d is not null, 'otro evento (otro comprobante) es otro reclamo';
+
+  -- ---- Datos inválidos ---------------------------------------------------------------------------------
+  begin perform public.email_log_claim('Tipo Malo', ref, h1, 'a***@b***.com'); raise exception 'tipo inválido';
+  exception when check_violation then null; end;
+  begin perform public.email_log_claim('prueba_a', ref, 'ana@correo.com', 'a***@b***.com'); raise exception 'el correo en claro no es una huella';
+  exception when check_violation then null; end;
+  begin perform public.email_log_claim('prueba_a', '', h1, 'a***@b***.com'); raise exception 'referencia vacía';
+  exception when check_violation then null; end;
+
+  -- ---- Marcar resultados: solo desde pendiente y solo estados finales ------------------------------
+  begin perform public.email_log_finish(a, 'pendiente', null); raise exception 'pendiente no es un resultado';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'resultado inválido: ' || sqlerrm; end;
+  begin perform public.email_log_finish(a, 'otro', null); raise exception 'estado desconocido';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'estado desconocido: ' || sqlerrm; end;
+  perform public.email_log_finish(a, 'enviado', null);
+  perform public.email_log_finish(b, 'fallido', repeat('x', 500));
+  perform public.email_log_finish(c, 'simulado', null);
+  -- Un resultado ya marcado no se pisa
+  perform public.email_log_finish(a, 'fallido', 'tarde');
+  reset role;
+
+  assert (select estado from public.email_log where id = a) = 'enviado', 'un resultado ya marcado no se cambia';
+  assert (select estado from public.email_log where id = b) = 'fallido', 'fallido';
+  assert char_length((select error from public.email_log where id = b)) = 300, 'el error se recorta a 300';
+  assert (select estado from public.email_log where id = c) = 'simulado', 'simulado';
+  assert (select estado from public.email_log where id = d) = 'pendiente', 'sin marcar sigue pendiente';
+
+  -- Un enviado, fallido o simulado no se vuelve a reclamar; un pendiente reciente tampoco
+  set local role service_role;
+  assert public.email_log_claim('prueba_a', ref, h2, 'c***@d***.com') is null, 'un fallido no se reenvía solo';
+  assert public.email_log_claim('prueba_b', ref, h1, 'a***@b***.com') is null, 'un simulado no se reenvía';
+  assert public.email_log_claim('prueba_a', ref || '-2', h1, 'a***@b***.com') is null, 'un pendiente reciente no se reclama otra vez';
+  reset role;
+
+  -- Un reclamo abandonado (pendiente de hace más de 10 minutos) se puede recuperar
+  update public.email_log set creado_en = now() - interval '11 minutes' where id = d;
+  set local role service_role;
+  e := public.email_log_claim('prueba_a', ref || '-2', h1, 'a***@b***.com');
+  reset role;
+  assert e = d, 'el reclamo abandonado se recupera con el mismo id';
+
+  -- ---- Lectura: anónimo no; cliente y admin sin 2FA no ven nada; el admin con 2FA sí --------------
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  assert (select count(*) from public.email_log where tipo like 'prueba\_%') = 0, 'un cliente no ve registros';
+  perform set_config('request.jwt.claims', aal1_claims, true);
+  assert (select count(*) from public.email_log where tipo like 'prueba\_%') = 0, 'un admin sin 2FA no ve registros';
+  perform set_config('request.jwt.claims', admin_claims, true);
+  assert (select count(*) from public.email_log where tipo like 'prueba\_%' and referencia_id like ref || '%') = 4, 'el admin con 2FA ve los 4 registros';
+  reset role;
+
+  -- ---- Limpieza: borra lo de más de 90 días y conserva lo reciente --------------------------------
+  insert into public.email_log (tipo, referencia_id, destinatario_hash, destinatario_mascara, estado, creado_en)
+  values ('prueba_vieja', ref, h1, 'a***@b***.com', 'enviado', now() - interval '91 days')
+  returning id into stale;
+  n := public.cleanup_email_log();
+  assert n >= 1, 'la limpieza borró algo';
+  assert (select count(*) from public.email_log where id = stale) = 0, 'se borró el de 91 días';
+  assert (select count(*) from public.email_log where id = a) = 1, 'se conservó el reciente';
+end $$;
+
 rollback;
 
 select 'RLS OK' as resultado;

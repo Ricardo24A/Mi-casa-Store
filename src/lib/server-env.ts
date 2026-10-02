@@ -23,3 +23,26 @@ export function getServiceRoleKey() {
 export function getHmacSecret() {
   return process.env.RATE_LIMIT_SECRET || getServiceRoleKey();
 }
+
+export interface EmailConfig {
+  /** RESEND_API_KEY. null = modo simulación (no se envía nada; se registra el tipo y el destinatario enmascarado). */
+  apiKey: string | null;
+  /** EMAIL_FROM, p. ej. "Mi casa Store <pedidos@dominio>". null = remitente de prueba de Resend. */
+  from: string | null;
+  /** EMAIL_OWNER_TO. null = el correo de contacto de Configuración. */
+  ownerTo: string | null;
+  /** EMAIL_TEST_TO. Solo para pruebas: redirige TODOS los correos a esta dirección. Debe estar vacío en producción. */
+  testTo: string | null;
+}
+
+const clean = (value: string | undefined) => value?.trim() || null;
+
+/** Configuración de correos transaccionales (Resend). Nunca llega al navegador: este módulo es server-only. */
+export function getEmailConfig(): EmailConfig {
+  return {
+    apiKey: clean(process.env.RESEND_API_KEY),
+    from: clean(process.env.EMAIL_FROM),
+    ownerTo: clean(process.env.EMAIL_OWNER_TO),
+    testTo: clean(process.env.EMAIL_TEST_TO),
+  };
+}

@@ -24,6 +24,10 @@ Completa `.env.local` (no se sube al repositorio):
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase → Project Settings → API (`anon` o `publishable`) | Pública; la seguridad la dan las políticas RLS |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API (`service_role` o `secret`) | **Solo servidor.** Se salta RLS. Nunca con prefijo `NEXT_PUBLIC_`, ni en el navegador, ni en el repositorio |
 | `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` en local; el dominio real en producción | **Obligatoria en producción** (también en Preview de Vercel): sin ella, o si no es `https://` con solo el dominio, `next build` y `next start` fallan con un mensaje claro. Solo `localhost` admite `http` |
+| `RESEND_API_KEY` | resend.com → API Keys | **Solo servidor.** Opcional: sin ella los correos quedan en simulación (se registra el tipo y el destinatario enmascarado) |
+| `EMAIL_FROM` | Tu remitente, p. ej. `Mi casa Store <pedidos@dominio>` | Vacío = remitente de prueba de Resend. Al verificar el dominio, solo se cambia esta variable |
+| `EMAIL_OWNER_TO` | Correo del dueño | Opcional: vacío = el correo de contacto de Configuración |
+| `EMAIL_TEST_TO` | Tu correo de Resend | **Solo pruebas**: redirige todos los correos a esta dirección. Vacía en producción |
 | `RATE_LIMIT_SECRET` | Una cadena larga al azar (`openssl rand -hex 32`) | **Solo servidor.** Opcional: clave del HMAC del IP para el límite del formulario de contacto; sin ella se usa la clave `service_role` |
 
 ## Base de datos (Supabase)
@@ -52,6 +56,7 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 18. `migrations/20260929000018_store_phones.sql`: teléfono principal y secundario del negocio, normalizados (solo dígitos, formato nacional) y validados para Ecuador (celular 09 + 8 dígitos; fijo 02 a 07 + 7 dígitos; sin repetidos ni secuencias obvias; el secundario no repite al principal ni va solo), y la columna nueva en la vista pública `store_public_info`.
 19. `migrations/20260929000019_order_fulfillment_dashboard.sql`: pedidos enviados y entregados (`admin_mark_shipped` y `admin_mark_delivered`, una función por transición), fechas `pagado_en`, `enviado_en` y `entregado_en`, y los datos del Resumen (`admin_dashboard_summary` y `admin_stock_alerts`, solo para el admin con 2FA).
 20. `migrations/20260929000020_contact_messages.sql`: mensajes de /contacto (`contact_messages`, solo los lee el admin con 2FA; se crean solo con `create_contact_message`, que ejecuta `service_role`, valida todo y limita a 3 mensajes por correo y 10 por IP en una hora), `admin_mark_message_read` y `admin_archive_message`, y el horario de atención opcional en Configuración y en la vista pública `store_public_info`.
+22. `migrations/20260929000022_email_log.sql`: registro de correos (`email_log`: tipo, referencia, huella HMAC y máscara del destinatario, estado) con restricción única para no enviar dos veces el mismo evento, funciones `email_log_claim` y `email_log_finish` (solo `service_role`), lectura solo para el admin con 2FA y limpieza a los 90 días (pg_cron `cleanup-email-log`).
 21. `migrations/20260929000021_order_limits_rate_limits.sql`: `create_order` acepta como máximo 3 pedidos en `pendiente_pago` por usuario, bloquea el carrito de la cuenta y exige que las líneas sean las del carrito (un doble envío no crea dos pedidos); tabla `rate_limits` y `rate_limit_hit()` (solo `service_role`, claves HMAC) para el límite de intentos, y el cron `cleanup-rate-limits` (pg_cron, cada hora).
 17. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
 
@@ -103,6 +108,29 @@ Registro, login, confirmación de correo y recuperación de contraseña usan Sup
 El rol nunca lo envía el cliente: el trigger `handle_new_user` crea todo perfil como `customer` e ignora `raw_user_meta_data`. Hay un solo login (`/login`) para clientes y administrador. Un cliente va a su destino o al home; un administrador va a `/admin`, donde se le pide registrar o verificar el 2FA: con solo la contraseña nunca obtiene el panel. `/admin/login` y `/cuenta/login` redirigen a `/login`.
 
 **Turnstile:** crea un widget en Cloudflare y define `NEXT_PUBLIC_TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` (ver `.env.example`). En producción, sin el secreto el servidor rechaza registros y logins de clientes.
+
+### Correos transaccionales (Resend)
+
+Código en [`src/lib/email/`](src/lib/email/): plantillas (`templates.ts`, `render.ts`), lógica de envío (`send-core.ts`), conexión con Resend y la base (`mailer.ts`) y los puntos de entrada (`notify.ts`). Variables en la tabla de arriba y en `.env.example`.
+
+| Correo | A quién | Cuándo | Se envía una vez por |
+|---|---|---|---|
+| Pedido creado (con cuentas y plazo) | Cliente | `crearPedido` | pedido |
+| Comprobante recibido | Cliente | al subir o reemplazar el comprobante | comprobante |
+| Pago aprobado | Cliente | `aprobarPedido` | pedido |
+| Comprobante rechazado (con el motivo) | Cliente | `rechazarComprobante` | comprobante |
+| Pedido enviado | Cliente | `marcarEnviado` | pedido |
+| Pedido cancelado | Cliente | `cancelarPedido` | pedido |
+| Comprobante por revisar | Dueño | al subir o reemplazar el comprobante | comprobante |
+| Nuevo mensaje de contacto (nombre, asunto, vista previa) | Dueño | al guardarse el mensaje | mensaje |
+
+- Se envían **después** de guardar el cambio y con `after()`: nunca esperan al usuario ni pueden romper ni revertir el pedido, el comprobante, la aprobación o el mensaje. Si Resend falla, se registra `fallido` (un solo reintento corto ante 429, 5xx o red) y el flujo sigue.
+- **Sin duplicados:** `email_log` reclama cada (tipo, referencia, destinatario) antes de enviar. Nada se guarda en claro: solo una huella HMAC y la dirección enmascarada.
+- **Sin `RESEND_API_KEY`:** modo simulación (registra tipo y destinatario enmascarado en consola).
+- Los enlaces usan `NEXT_PUBLIC_SITE_URL` y apuntan a `/confirmacion/[referencia]` (el pedido del cliente) y a `/admin/pedidos/[referencia]` o `/admin/mensajes` (el dueño).
+- No hay correo al vencer un pedido (lo hace pg_cron, sin acción de la app detrás), al rechazar un pedido ni al marcarlo entregado.
+- Los correos de **Supabase Auth** (confirmar correo, recuperar contraseña) **no** pasan por aquí: siguen siendo de Supabase hasta configurar el SMTP propio con Resend.
+- **Con el dominio verificado:** verifica el dominio en Resend (registros DNS), cambia `EMAIL_FROM` y deja `EMAIL_TEST_TO` vacía. No hay que tocar código.
 
 ### Pruebas de la base de datos
 

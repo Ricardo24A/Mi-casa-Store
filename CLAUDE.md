@@ -215,6 +215,8 @@ Estructura: header, hero simple, categorías (solo las que tienen productos), "M
 
 **Plazos acotados.** Cuando el dueño rechaza un comprobante, el pedido vuelve a `pendiente_pago` con un plazo nuevo de `horas_limite_pago` contado desde el rechazo (el reemplazo de un comprobante en revisión **no** reinicia el plazo). Como un pedido admite como máximo 3 comprobantes, ese plazo nuevo se concede a lo sumo 3 veces: sin contar el tiempo que el pedido espera la revisión del dueño, un pedido mantiene stock reservado como máximo 4 × `horas_limite_pago` desde que se crea (el plazo inicial más hasta 3 nuevos). El tiempo en `comprobante_recibido` depende del dueño, que debe aprobar, rechazar o cancelar.
 
+**Correos (Resend)** (`src/lib/email/`): al cliente, pedido creado (con cuentas y plazo), comprobante recibido, pago aprobado, comprobante rechazado (con motivo), pedido enviado y pedido cancelado; al dueño, comprobante por revisar y mensaje de contacto nuevo. No hay correo de pedido entregado, vencido ni rechazado. Se envían con `after()` una vez guardado el cambio, y un fallo nunca rompe el flujo. Sin `RESEND_API_KEY` quedan en simulación. Los correos de Supabase Auth no pasan por aquí.
+
 Riesgo principal: comprobantes falsos o editados. El dueño aprueba solo después de ver el dinero reflejado en su cuenta, nunca solo por la imagen. Mostrar esta advertencia en el dashboard.
 
 ## 9. Modelo de datos
@@ -233,6 +235,7 @@ Aplicado en `supabase/migrations/`. Toda tabla tiene RLS activo y permisos (GRAN
 - `payment_proofs` (id, order_id, archivo en el bucket privado `payment-proofs`, hash SHA-256, estado: en_revision | aprobado | rechazado, motivo, revisado_por, revisado_en). Un rechazo exige motivo.
 - `store_settings` (una sola fila: datos del negocio, horario_atencion, cuentas_bancarias, costo_envio, envio_gratis_desde, descuento_transferencia_pct, horas_limite_pago)
 - `contact_messages` (id, nombre, email, telefono normalizado, asunto opcional, mensaje, aceptado_en, estado: nuevo | leido | archivado, created_at, leido_en, ip_hash temporal). Sin permisos de escritura por la API: se crea con `create_contact_message` (solo `service_role`) y cambia de estado con funciones admin; solo el admin con 2FA lee.
+- `email_log` (tipo, referencia_id, destinatario_hash HMAC, destinatario_mascara, estado: pendiente | enviado | fallido | simulado, error corto, creado_en; única por tipo + referencia + destinatario): evita enviar dos veces el mismo correo. Solo lo lee el admin con 2FA; el servidor escribe con `email_log_claim` y `email_log_finish` (service_role). pg_cron borra lo de más de 90 días.
 - `rate_limits` (bucket, clave HMAC, ventana_inicio, expira_en, intentos): límite de intentos de las acciones de servidor. Nadie la lee por la API; solo `rate_limit_hit()` (service_role) y `cleanup_rate_limits()` (pg_cron, cada hora).
 - Vista `visible_categories`: categorías y subcategorías con al menos un producto activo (sección 4).
 
