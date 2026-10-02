@@ -45,7 +45,7 @@ export interface AdminSession extends AdminAccessState {
  * Un admin en aal1 puede leer su propia fila de `profiles` (RLS: `id = auth.uid()`), que es
  * lo que permite decidir entre enrolar y verificar.
  */
-export const getAdminSession = cache(async (): Promise<AdminSession> => {
+async function loadAdminSession(): Promise<AdminSession> {
   const empty: AdminSession = { userId: null, role: null, aal: null, hasVerifiedFactor: false, fullName: null };
   const supabase = await createClient();
   const {
@@ -66,7 +66,18 @@ export const getAdminSession = cache(async (): Promise<AdminSession> => {
     hasVerifiedFactor: (user.factors ?? []).some((f) => f.factor_type === "totp" && f.status === "verified"),
     fullName: profile?.full_name ?? null,
   };
-});
+}
+
+/** Estado de la sesión, deduplicado por petición (lo usan páginas y acciones). */
+export const getAdminSession = cache(loadAdminSession);
+
+/**
+ * La misma lectura SIN la deduplicación de `cache()`. Para componentes de LAYOUT que van en su propio
+ * <Suspense> (menú del panel, saludo de Mi cuenta, dueño del carrito): si compartieran la promesa con
+ * la página, la espera de la página quedaría atribuida al layout y Cache Components marcaría la ruta
+ * como bloqueante. Cuesta una consulta más a Supabase Auth por componente.
+ */
+export const getAdminSessionUncached = loadAdminSession;
 
 /** Redirige si la zona no corresponde al estado de la sesión. Devuelve el estado si sí. */
 export async function guardAdminArea(area: AdminArea): Promise<AdminSession> {

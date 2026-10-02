@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
-import { getAdminSession } from "@/lib/auth";
+import { getAdminSession, getAdminSessionUncached } from "@/lib/auth";
 import type { CartApiResult } from "@/lib/cart-core";
 import { itemSchema, type CartItem } from "@/lib/cart-logic";
 import { createClient } from "@/lib/supabase/server";
@@ -24,7 +24,9 @@ export async function readCartLines(supabase: SupabaseClient, userId: string): P
 
 /** Carrito de la sesión actual (para el layout de la tienda). Solo clientes; el resto, invitado. */
 export async function getSessionCart(): Promise<{ userId: string | null; items: CartItem[] }> {
-  const session = await getAdminSession();
+  // Lectura propia (sin la deduplicación de cache()): la usa CartOwner en el layout de la tienda,
+  // dentro de su <Suspense>, y no debe compartir la espera con la página.
+  const session = await getAdminSessionUncached();
   if (!session.userId || session.role !== "customer") return { userId: null, items: [] };
   const supabase = await createClient();
   return { userId: session.userId, items: await readCartLines(supabase, session.userId) };

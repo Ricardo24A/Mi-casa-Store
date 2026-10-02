@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { LogOut, Menu, X } from "lucide-react";
 import { NAV_ITEMS, type Counters } from "@/components/admin/admin-nav";
 import { cerrarSesion } from "@/app/(admin)/admin/actions";
@@ -14,20 +14,77 @@ const BADGE_LABEL: Record<keyof Counters, string> = {
   mensajes: "sin leer",
 };
 
+/** Cierra el cajón del menú en celular al elegir una sección. */
+const DrawerContext = createContext<() => void>(() => {});
+
+const itemClass = "flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-semibold transition-colors duration-150";
+
+/**
+ * Menú del panel con la sección activa y los contadores. Lee la URL (`usePathname`), así que el layout
+ * lo pone dentro de <Suspense> con `PanelNavStatic` como respaldo. `counters` null = aún sin contar.
+ */
+export function PanelNav({ counters }: { counters: Counters | null }) {
+  const pathname = usePathname();
+  const close = useContext(DrawerContext);
+  return (
+    <ul className="space-y-1">
+      {NAV_ITEMS.map((item) => {
+        const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
+        const count = item.badge && counters ? counters[item.badge] : 0;
+        return (
+          <li key={item.href}>
+            <Link
+              href={item.href}
+              onClick={close}
+              aria-current={active ? "page" : undefined}
+              className={cn(itemClass, active ? "bg-accent text-bg" : "text-accent-mid hover:bg-accent/60 hover:text-bg")}
+            >
+              <item.icon className="size-5" strokeWidth={1.75} aria-hidden />
+              {item.label}
+              {item.badge && count > 0 && (
+                <span className="ml-auto inline-flex min-w-6 items-center justify-center rounded-full bg-bg px-2 text-xs font-semibold leading-6 text-accent-hover">
+                  <span aria-hidden>{count > 99 ? "99+" : count}</span>
+                  <span className="sr-only">
+                    {count} {BADGE_LABEL[item.badge]}
+                  </span>
+                </span>
+              )}
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Respaldo del menú: los mismos enlaces, sin sección activa ni contadores (no lee la URL ni la sesión). */
+export function PanelNavStatic() {
+  const close = useContext(DrawerContext);
+  return (
+    <ul className="space-y-1">
+      {NAV_ITEMS.map((item) => (
+        <li key={item.href}>
+          <Link href={item.href} onClick={close} className={cn(itemClass, "text-accent-mid hover:bg-accent/60 hover:text-bg")}>
+            <item.icon className="size-5" strokeWidth={1.75} aria-hidden />
+            {item.label}
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function SidebarContent({
-  fullName,
-  counters,
-  onNavigate,
+  nav,
+  user,
   closeRef,
   onClose,
 }: {
-  fullName: string | null;
-  counters: Counters;
-  onNavigate?: () => void;
+  nav: ReactNode;
+  user: ReactNode;
   closeRef?: React.Ref<HTMLButtonElement>;
   onClose?: () => void;
 }) {
-  const pathname = usePathname();
   return (
     <>
       <div className="flex items-center justify-between px-5 py-4">
@@ -49,40 +106,11 @@ function SidebarContent({
       </div>
 
       <nav aria-label="Panel" className="flex-1 px-3 py-2">
-        <ul className="space-y-1">
-          {NAV_ITEMS.map((item) => {
-            const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
-            const count = item.badge ? counters[item.badge] : 0;
-            return (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  onClick={onNavigate}
-                  aria-current={active ? "page" : undefined}
-                  className={cn(
-                    "flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-semibold transition-colors duration-150",
-                    active ? "bg-accent text-bg" : "text-accent-mid hover:bg-accent/60 hover:text-bg",
-                  )}
-                >
-                  <item.icon className="size-5" strokeWidth={1.75} aria-hidden />
-                  {item.label}
-                  {item.badge && count > 0 && (
-                    <span className="ml-auto inline-flex min-w-6 items-center justify-center rounded-full bg-bg px-2 text-xs font-semibold leading-6 text-accent-hover">
-                      <span aria-hidden>{count > 99 ? "99+" : count}</span>
-                      <span className="sr-only">
-                        {count} {BADGE_LABEL[item.badge]}
-                      </span>
-                    </span>
-                  )}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+        {nav}
       </nav>
 
       <div className="border-t border-accent px-3 py-3">
-        <p className="truncate px-3 pb-2 text-sm text-accent-mid">{fullName ?? "Administrador"}</p>
+        <p className="truncate px-3 pb-2 text-sm text-accent-mid">{user}</p>
         <form action={cerrarSesion} onSubmit={clearCartOnSignOut}>
           <button
             type="submit"
@@ -97,16 +125,12 @@ function SidebarContent({
   );
 }
 
-/** Marco del panel: menú lateral fijo en escritorio y cajón en móvil. */
-export function AdminShell({
-  fullName,
-  counters = { pedidos: 0, mensajes: 0 },
-  children,
-}: {
-  fullName: string | null;
-  counters?: Counters;
-  children: ReactNode;
-}) {
+/**
+ * Marco del panel: menú lateral fijo en escritorio y cajón en móvil. No lee la sesión ni la URL: el
+ * menú (`nav`, con la sección activa y los contadores) y el nombre (`user`) llegan ya envueltos en
+ * <Suspense> desde el layout, así el marco se pinta al instante en cualquier ruta.
+ */
+export function AdminShell({ nav, user, children }: { nav: ReactNode; user: ReactNode; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -128,7 +152,7 @@ export function AdminShell({
   return (
     <div className="min-h-dvh lg:pl-64">
       <aside className="on-dark fixed inset-y-0 left-0 hidden w-64 flex-col bg-accent-hover text-bg lg:flex">
-        <SidebarContent fullName={fullName} counters={counters} />
+        <SidebarContent nav={nav} user={user} />
       </aside>
 
       <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-line bg-bg px-4 py-2 lg:hidden">
@@ -148,13 +172,9 @@ export function AdminShell({
         <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true" aria-label="Menú del panel">
           <div className="absolute inset-0 bg-ink/40" onClick={() => setOpen(false)} aria-hidden />
           <aside className="on-dark absolute inset-y-0 left-0 flex w-[85%] max-w-72 flex-col bg-accent-hover text-bg">
-            <SidebarContent
-              fullName={fullName}
-              counters={counters}
-              closeRef={closeRef}
-              onClose={() => setOpen(false)}
-              onNavigate={() => setOpen(false)}
-            />
+            <DrawerContext.Provider value={() => setOpen(false)}>
+              <SidebarContent nav={nav} user={user} closeRef={closeRef} onClose={() => setOpen(false)} />
+            </DrawerContext.Provider>
           </aside>
         </div>
       )}
