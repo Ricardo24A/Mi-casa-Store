@@ -3,44 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { BadgePercent, ClipboardList, FolderTree, Inbox, LayoutDashboard, LogOut, Menu, Package, Settings, X, type LucideIcon } from "lucide-react";
+import { LogOut, Menu, X } from "lucide-react";
+import { NAV_ITEMS, type Counters } from "@/components/admin/admin-nav";
 import { cerrarSesion } from "@/app/(admin)/admin/actions";
 import { clearCartOnSignOut } from "@/lib/cart-store";
 import { cn } from "@/lib/utils";
-
-interface NavItem {
-  href: string;
-  label: string;
-  icon: LucideIcon;
-  /** Solo activo con la ruta exacta (Resumen no debe quedar activo en las demás). */
-  exact?: boolean;
-  /** Contador que se muestra junto al nombre (pedidos por revisar, mensajes sin leer). */
-  badge?: keyof Counters;
-}
-
-/** Contadores del menú. */
-export interface Counters {
-  pedidos: number;
-  mensajes: number;
-}
 
 const BADGE_LABEL: Record<keyof Counters, string> = {
   pedidos: "por revisar",
   mensajes: "sin leer",
 };
-
-/**
- * Solo hay enlaces a pantallas que existen. Cada sección nueva se agrega aquí junto con su página.
- */
-const NAV_ITEMS: NavItem[] = [
-  { href: "/admin", label: "Resumen", icon: LayoutDashboard, exact: true },
-  { href: "/admin/productos", label: "Productos", icon: Package },
-  { href: "/admin/categorias", label: "Categorías", icon: FolderTree },
-  { href: "/admin/descuentos", label: "Descuentos", icon: BadgePercent },
-  { href: "/admin/pedidos", label: "Pedidos", icon: ClipboardList, badge: "pedidos" },
-  { href: "/admin/mensajes", label: "Mensajes", icon: Inbox, badge: "mensajes" },
-  { href: "/admin/configuracion", label: "Configuración", icon: Settings },
-];
 
 function SidebarContent({
   fullName,

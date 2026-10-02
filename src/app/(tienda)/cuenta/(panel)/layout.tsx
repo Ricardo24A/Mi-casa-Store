@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense, type ReactNode } from "react";
 import { AccountNav } from "@/components/account/account-nav";
 import { Container } from "@/components/ui/container";
+import { PageSkeleton } from "@/components/ui/skeleton";
 import { requireCustomer } from "@/lib/auth";
 
 export const metadata: Metadata = { robots: { index: false, follow: false } };
@@ -24,7 +25,16 @@ async function AccountFrame({ children }: { children: ReactNode }) {
 
 export default function AccountPanelLayout({ children }: { children: ReactNode }) {
   return (
-    <Suspense fallback={<Container className="py-8" aria-busy="true"><div className="h-64" /></Container>}>
+    <Suspense
+      fallback={
+        <Container className="py-8">
+          <h1 className="text-3xl font-semibold tracking-tight text-ink">Mi cuenta</h1>
+          <div className="mt-8">
+            <PageSkeleton label="Cargando tu cuenta…" rows={3} />
+          </div>
+        </Container>
+      }
+    >
       <AccountFrame>{children}</AccountFrame>
     </Suspense>
   );

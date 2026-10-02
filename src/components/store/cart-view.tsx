@@ -128,60 +128,64 @@ export function CartView() {
             }
             const notice = lineNotice(cartLineStatus(item.cantidad, p));
             return (
-              <li key={item.productId} className="flex gap-4 rounded-card border border-line bg-surface p-4">
-                <Link href={`/producto/${p.slug}`} className="block w-24 shrink-0 self-start overflow-hidden rounded-lg border border-line">
-                  <ProductImage src={p.imagenes[0]} alt={p.nombre} sizes="96px" />
-                </Link>
-                <div className="min-w-0 flex-1">
-                  <Link href={`/producto/${p.slug}`} className="-my-3 line-clamp-2 block py-3 text-sm font-semibold text-ink hover:text-accent">
-                    {p.nombre}
+              // Arriba: imagen, nombre, categoría y precio. Debajo, a todo el ancho de la tarjeta: cantidad,
+              // subtotal y papelera (con flex-wrap, así nada se sale de la tarjeta ni en 320 px).
+              <li key={item.productId} className="min-w-0 rounded-card border border-line bg-surface p-4">
+                <div className="flex gap-4">
+                  <Link href={`/producto/${p.slug}`} className="block w-20 shrink-0 sm:w-24 self-start overflow-hidden rounded-lg border border-line">
+                    <ProductImage src={p.imagenes[0]} alt={p.nombre} sizes="96px" />
                   </Link>
-                  <p className="mt-0.5 text-xs text-ink-soft">{p.subcategoria.nombre}</p>
-                  <div className="mt-2">
-                    <PriceTag product={p} />
-                  </div>
-
-                  {notice && (
-                    <p className="mt-2 text-sm text-sale-ink" role="alert">
-                      {notice}
-                    </p>
-                  )}
-
-                  <div className="mt-3 flex items-center justify-between gap-3">
-                    <div className="inline-flex items-center rounded-lg border border-line" role="group" aria-label={`Cantidad de ${p.nombre}`}>
-                      <button
-                        type="button"
-                        onClick={() => setCartQuantity(p.id, item.cantidad - 1)}
-                        disabled={item.cantidad <= 1}
-                        className="inline-flex size-11 items-center justify-center hover:bg-soft disabled:opacity-40"
-                        aria-label="Disminuir cantidad"
-                      >
-                        <Minus className="size-4" aria-hidden />
-                      </button>
-                      <span className="w-9 text-center text-sm font-semibold">{item.cantidad}</span>
-                      <button
-                        type="button"
-                        onClick={() => setCartQuantity(p.id, item.cantidad + 1)}
-                        disabled={item.cantidad >= p.disponible}
-                        className="inline-flex size-11 items-center justify-center hover:bg-soft disabled:opacity-40"
-                        aria-label="Aumentar cantidad"
-                      >
-                        <Plus className="size-4" aria-hidden />
-                      </button>
+                  <div className="min-w-0 flex-1">
+                    <Link href={`/producto/${p.slug}`} className="-my-3 line-clamp-2 block py-3 text-sm font-semibold text-ink hover:text-accent">
+                      {p.nombre}
+                    </Link>
+                    <p className="mt-0.5 text-xs text-ink-soft">{p.subcategoria.nombre}</p>
+                    <div className="mt-2">
+                      <PriceTag product={p} />
                     </div>
-                    <div className="flex items-center gap-3">
-                      <p className="text-sm font-semibold text-ink">
-                        {formatUsd(fromCents(toCents(p.precioFinal) * item.cantidad))}
+
+                    {notice && (
+                      <p className="mt-2 text-sm text-sale-ink" role="alert">
+                        {notice}
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => removeFromCart(p.id)}
-                        className="inline-flex size-11 items-center justify-center rounded-lg text-ink-soft hover:bg-bg-alt hover:text-sale-ink"
-                        aria-label={`Quitar ${p.nombre}`}
-                      >
-                        <Trash2 className="size-4" aria-hidden />
-                      </button>
-                    </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="inline-flex items-center rounded-lg border border-line" role="group" aria-label={`Cantidad de ${p.nombre}`}>
+                    <button
+                      type="button"
+                      onClick={() => setCartQuantity(p.id, item.cantidad - 1)}
+                      disabled={item.cantidad <= 1}
+                      className="inline-flex size-11 items-center justify-center hover:bg-soft disabled:opacity-40"
+                      aria-label="Disminuir cantidad"
+                    >
+                      <Minus className="size-4" aria-hidden />
+                    </button>
+                    <span className="w-9 text-center text-sm font-semibold">{item.cantidad}</span>
+                    <button
+                      type="button"
+                      onClick={() => setCartQuantity(p.id, item.cantidad + 1)}
+                      disabled={item.cantidad >= p.disponible}
+                      className="inline-flex size-11 items-center justify-center hover:bg-soft disabled:opacity-40"
+                      aria-label="Aumentar cantidad"
+                    >
+                      <Plus className="size-4" aria-hidden />
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <p className="text-sm font-semibold text-ink">
+                      {formatUsd(fromCents(toCents(p.precioFinal) * item.cantidad))}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => removeFromCart(p.id)}
+                      className="inline-flex size-11 items-center justify-center rounded-lg text-ink-soft hover:bg-bg-alt hover:text-sale-ink"
+                      aria-label={`Quitar ${p.nombre}`}
+                    >
+                      <Trash2 className="size-4" aria-hidden />
+                    </button>
                   </div>
                 </div>
               </li>

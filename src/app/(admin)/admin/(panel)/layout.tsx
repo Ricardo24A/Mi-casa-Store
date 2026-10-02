@@ -1,5 +1,6 @@
 import { Suspense, type ReactNode } from "react";
 import { AdminShell } from "@/components/admin/admin-shell";
+import { AdminShellSkeleton } from "@/components/admin/admin-shell-skeleton";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -24,7 +25,11 @@ async function PanelFrame({ children }: { children: ReactNode }) {
 
 export default function PanelLayout({ children }: { children: ReactNode }) {
   return (
-    <Suspense fallback={<div className="min-h-dvh" aria-busy="true" />}>
+    // Mientras se comprueba la sesión: el mismo marco del panel (menú lateral sin contadores) con el
+    // esqueleto del contenido. Nunca una pantalla en blanco.
+    <Suspense
+      fallback={<AdminShellSkeleton />}
+    >
       <PanelFrame>{children}</PanelFrame>
     </Suspense>
   );

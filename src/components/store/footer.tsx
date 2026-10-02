@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { cacheLife } from "next/cache";
+import { cacheLife, cacheTag } from "next/cache";
 import { Suspense } from "react";
 import { BrandLink } from "@/components/brand-icons";
 import { Container } from "@/components/ui/container";
-import { getCategoryTree } from "@/lib/catalog";
+import { CATALOG_TAG, getCategoryTree } from "@/lib/catalog";
 import { formatEcPhone, telHref, whatsappHref } from "@/lib/phone-ec";
-import { getPublicStoreInfo } from "@/lib/store-info";
+import { STORE_INFO_TAG, getPublicStoreInfo } from "@/lib/store-info";
 
 const linkClass =
   "inline-flex min-h-11 items-center text-accent-mid underline-offset-4 hover:text-bg hover:underline";
@@ -20,9 +20,28 @@ async function CurrentYear() {
   return <>{new Date().getFullYear()}</>;
 }
 
+/**
+ * Datos del pie: categorías visibles y datos públicos del negocio. Es lo mismo para todos, así que
+ * se cachea (cliente de Supabase sin cookies ni sesión, dentro de las funciones de catálogo y de
+ * `store_public_info`). Se renueva al guardar Configuración (`updateTag("tienda")`) o al cambiar el
+ * catálogo (`updateTag("catalogo")`).
+ */
+async function getFooterData() {
+  "use cache";
+  cacheLife("hours");
+  cacheTag(STORE_INFO_TAG, CATALOG_TAG);
+  const [categories, info] = await Promise.all([getCategoryTree(), getPublicStoreInfo()]);
+  return { categories, info };
+}
+
+/** Respaldo mientras llegan los datos del pie: la misma franja, sin contenido. */
+export function FooterFallback() {
+  return <footer aria-busy="true" className="mt-12 h-56 bg-accent-hover" />;
+}
+
 /** Solo enlaces a páginas que existen. Los demás (legales) se añaden cuando existan. */
 export async function Footer() {
-  const [categories, info] = await Promise.all([getCategoryTree(), getPublicStoreInfo()]);
+  const { categories, info } = await getFooterData();
   const phones = [info.telefono, info.telefonoSecundario].filter((p): p is string => Boolean(p));
   const hasContact = Boolean(info.email || phones.length > 0 || info.direccion);
 
