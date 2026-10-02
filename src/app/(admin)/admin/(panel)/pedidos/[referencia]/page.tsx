@@ -12,6 +12,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { OrderStatus, ProofStatus } from "@/types/database";
 
+// Panel privado: exige sesión y 2FA y no se beneficia de un armazón instantáneo. Se exime de la
+// validación de navegación instantánea de Cache Components (el acceso lo sigue cuidando requireAdmin()).
+export const instant = false;
+
 export const metadata: Metadata = { title: "Detalle del pedido" };
 
 const referenciaSchema = z.string().regex(/^MC-[A-Z2-9]{8}$/);

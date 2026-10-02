@@ -5,6 +5,10 @@ import { getAdminCategoryTree } from "@/lib/admin-categories";
 import { requireAdmin } from "@/lib/auth";
 import { uuid } from "@/lib/validation/common";
 
+// Panel privado: exige sesión y 2FA y no se beneficia de un armazón instantáneo. Se exime de la
+// validación de navegación instantánea de Cache Components (el acceso lo sigue cuidando requireAdmin()).
+export const instant = false;
+
 export const metadata: Metadata = { title: "Nueva categoría" };
 
 export default async function NewCategoryPage(props: PageProps<"/admin/categorias/nueva">) {

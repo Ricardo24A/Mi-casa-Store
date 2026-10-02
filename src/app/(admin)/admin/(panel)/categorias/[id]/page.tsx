@@ -9,6 +9,10 @@ import { publicImageUrl } from "@/lib/supabase/public";
 import { createClient } from "@/lib/supabase/server";
 import { uuid } from "@/lib/validation/common";
 
+// Panel privado: exige sesión y 2FA y no se beneficia de un armazón instantáneo. Se exime de la
+// validación de navegación instantánea de Cache Components (el acceso lo sigue cuidando requireAdmin()).
+export const instant = false;
+
 export const metadata: Metadata = { title: "Editar categoría" };
 
 export default async function EditCategoryPage(props: PageProps<"/admin/categorias/[id]">) {

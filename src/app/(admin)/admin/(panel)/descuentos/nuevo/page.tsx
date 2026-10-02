@@ -4,6 +4,10 @@ import { DiscountForm } from "@/components/admin/discount-form";
 import { getDiscountFormContext } from "@/lib/admin-discounts";
 import { requireAdmin } from "@/lib/auth";
 
+// Panel privado: exige sesión y 2FA y no se beneficia de un armazón instantáneo. Se exime de la
+// validación de navegación instantánea de Cache Components (el acceso lo sigue cuidando requireAdmin()).
+export const instant = false;
+
 export const metadata: Metadata = { title: "Nuevo descuento" };
 
 export default async function NewDiscountPage() {

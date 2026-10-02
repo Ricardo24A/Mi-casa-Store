@@ -9,6 +9,10 @@ import { requireAdmin } from "@/lib/auth";
 import { DISCOUNT_RULES, SCOPE_LABEL, discountValueLabel, type DiscountStatus } from "@/lib/discount-rules";
 import { cn } from "@/lib/utils";
 
+// Panel privado: exige sesión y 2FA y no se beneficia de un armazón instantáneo. Se exime de la
+// validación de navegación instantánea de Cache Components (el acceso lo sigue cuidando requireAdmin()).
+export const instant = false;
+
 export const metadata: Metadata = { title: "Descuentos" };
 
 const STATUS: Record<DiscountStatus, { label: string; tone: string }> = {

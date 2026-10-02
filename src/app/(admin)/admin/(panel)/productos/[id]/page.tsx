@@ -8,6 +8,10 @@ import { requireAdmin } from "@/lib/auth";
 import { availableStock } from "@/lib/stock-rules";
 import { uuid } from "@/lib/validation/common";
 
+// Panel privado: exige sesión y 2FA y no se beneficia de un armazón instantáneo. Se exime de la
+// validación de navegación instantánea de Cache Components (el acceso lo sigue cuidando requireAdmin()).
+export const instant = false;
+
 export const metadata: Metadata = { title: "Editar producto" };
 
 export default async function EditProductPage(props: PageProps<"/admin/productos/[id]">) {

@@ -19,6 +19,10 @@ import { isLowStock } from "@/lib/stock-rules";
 import { uuid } from "@/lib/validation/common";
 import { cn } from "@/lib/utils";
 
+// Panel privado: exige sesión y 2FA y no se beneficia de un armazón instantáneo. Se exime de la
+// validación de navegación instantánea de Cache Components (el acceso lo sigue cuidando requireAdmin()).
+export const instant = false;
+
 export const metadata: Metadata = { title: "Productos" };
 
 const ESTADO_LABEL: Record<StockFilter, string> = {

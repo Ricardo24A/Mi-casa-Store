@@ -13,6 +13,10 @@ import { createClient } from "@/lib/supabase/server";
 import { uuid } from "@/lib/validation/common";
 import type { ContactMessage } from "@/types/database";
 
+// Panel privado: exige sesión y 2FA y no se beneficia de un armazón instantáneo. Se exime de la
+// validación de navegación instantánea de Cache Components (el acceso lo sigue cuidando requireAdmin()).
+export const instant = false;
+
 export const metadata: Metadata = { title: "Mensaje" };
 
 const dateFormat = new Intl.DateTimeFormat("es-EC", {

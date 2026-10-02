@@ -10,6 +10,10 @@ import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import type { ContactMessage, ContactMessageStatus } from "@/types/database";
 
+// Panel privado: exige sesión y 2FA y no se beneficia de un armazón instantáneo. Se exime de la
+// validación de navegación instantánea de Cache Components (el acceso lo sigue cuidando requireAdmin()).
+export const instant = false;
+
 export const metadata: Metadata = { title: "Mensajes" };
 
 const PAGE_SIZE = 20;

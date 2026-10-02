@@ -5,6 +5,10 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { getSettingsDefaults } from "@/lib/admin-settings";
 import { requireAdmin } from "@/lib/auth";
 
+// Panel privado: exige sesión y 2FA y no se beneficia de un armazón instantáneo. Se exime de la
+// validación de navegación instantánea de Cache Components (el acceso lo sigue cuidando requireAdmin()).
+export const instant = false;
+
 export const metadata: Metadata = { title: "Configuración" };
 
 export default async function SettingsPage() {
