@@ -86,6 +86,7 @@ test("cada acción programa su correo solo tras guardar el cambio", () => {
     ["src/app/(admin)/admin/(panel)/pedidos/actions.ts", 'rpc("admin_approve_order"', "notifyPaymentApproved("],
     ["src/app/(admin)/admin/(panel)/pedidos/actions.ts", 'rpc("admin_reject_proof"', "notifyProofRejected("],
     ["src/app/(admin)/admin/(panel)/pedidos/actions.ts", 'rpc("admin_cancel_order"', "notifyOrderCancelled("],
+    ["src/app/(admin)/admin/(panel)/pedidos/actions.ts", 'rpc("admin_reject_order"', "notifyOrderRejected("],
     ["src/app/(admin)/admin/(panel)/pedidos/actions.ts", 'rpc("admin_mark_shipped"', "notifyOrderShipped("],
     ["src/app/(tienda)/contacto/actions.ts", 'rpc("create_contact_message"', "notifyOwnerContactMessage("],
   ];
@@ -142,4 +143,25 @@ test("cada evento produce su tipo y referencia", () => {
   const rejected = P.planProofRejected(store, order, "proof-9", "No coincide")[0];
   assert.equal(rejected.tipo, "comprobante_rechazado");
   assert.equal(rejected.referencia, "proof-9", "cada rechazo es un evento distinto");
+});
+
+test("pedido rechazado: un correo a la cuenta con el motivo, una sola vez y sin romper si el envío falla", async () => {
+  const jobs = P.planOrderRejected(store, order, `No coincide <script>alert("x")</script>`);
+  assert.deepEqual(jobs.map((j) => [j.tipo, j.referencia, j.to]), [["pedido_rechazado", "MC-ABCD2345", "ana@correo.com"]]);
+
+  const ok = fakeDeps();
+  assert.deepEqual(await processEmails(jobs, ok.deps), ["enviado"]);
+  assert.match(ok.sent[0].subject, /MC-ABCD2345/);
+  assert.doesNotMatch(ok.sent[0].html, /<script/);
+  assert.match(ok.sent[0].html, /&lt;script&gt;alert\(&quot;x&quot;\)&lt;\/script&gt;/);
+  assert.match(ok.sent[0].text, /Motivo\nNo coincide/);
+  assert.deepEqual(await processEmails(jobs, ok.deps), ["duplicado"]);
+  assert.equal(ok.sent.length, 1);
+
+  const broken = fakeDeps();
+  broken.deps.transport = async () => {
+    throw new Error("Resend caído");
+  };
+  assert.deepEqual(await processEmails(P.planOrderRejected(store, order, "Motivo"), broken.deps), ["fallido"], "el fallo no se propaga");
+  assert.equal(broken.finished[0].estado, "fallido");
 });

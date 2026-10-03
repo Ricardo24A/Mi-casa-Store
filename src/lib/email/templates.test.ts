@@ -56,6 +56,7 @@ test("todos los correos traen asunto, HTML, texto plano y un pie con los datos r
     T.proofRejected(ctx, { referencia: "MC-ABCD2345", nombre: "Ana", motivo: "No coincide" }),
     T.orderShipped(ctx, { referencia: "MC-ABCD2345", nombre: "Ana" }),
     T.orderCancelled(ctx, { referencia: "MC-ABCD2345", nombre: "Ana", motivo: null }),
+    T.orderRejected(ctx, { referencia: "MC-ABCD2345", nombre: "Ana", motivo: "Monto distinto" }),
     T.ownerProofToReview(ctx, { referencia: "MC-ABCD2345", total: 38.5 }),
     T.ownerContactMessage(ctx, { nombre: "Ana", asunto: null, mensaje: "Hola, quisiera saber si hacen envíos." }),
   ];

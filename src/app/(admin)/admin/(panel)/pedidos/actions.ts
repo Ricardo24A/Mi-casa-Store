@@ -7,6 +7,7 @@ import {
   notifyOrderCancelled,
   notifyOrderShipped,
   notifyPaymentApproved,
+  notifyOrderRejected,
   notifyProofRejected,
 } from "@/lib/email/notify";
 import { createClient } from "@/lib/supabase/server";
@@ -103,6 +104,7 @@ export async function rechazarPedido(_prev: OrderActionState, formData: FormData
     p_motivo: parsed.data.motivo,
   });
   if (error) return { error: DB_ERRORS[error.message] ?? GENERIC_ERROR };
+  notifyOrderRejected(parsed.data.orderId, parsed.data.motivo);
   return done("Pedido rechazado. Se liberó el stock reservado.");
 }
 

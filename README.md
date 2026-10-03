@@ -122,6 +122,7 @@ Código en [`src/lib/email/`](src/lib/email/): plantillas (`templates.ts`, `rend
 | Comprobante rechazado (con el motivo) | Cliente | `rechazarComprobante` | comprobante |
 | Pedido enviado | Cliente | `marcarEnviado` | pedido |
 | Pedido cancelado | Cliente | `cancelarPedido` | pedido |
+| Pedido rechazado (con el motivo) | Cliente | `rechazarPedido` | pedido |
 | Comprobante por revisar | Dueño | al subir o reemplazar el comprobante | comprobante |
 | Nuevo mensaje de contacto (nombre, asunto, vista previa) | Dueño | al guardarse el mensaje | mensaje |
 
@@ -131,7 +132,7 @@ Código en [`src/lib/email/`](src/lib/email/): plantillas (`templates.ts`, `rend
 - Los enlaces usan `NEXT_PUBLIC_SITE_URL` y apuntan a `/confirmacion/[referencia]` (el pedido del cliente) y a `/admin/pedidos/[referencia]` o `/admin/mensajes` (el dueño).
 - **Nada se omite en silencio:** al programarse cada evento escribe `[email:programado]` en el registro del servidor; un correo sin destinatario válido (p. ej. el aviso al dueño sin `EMAIL_OWNER_TO` ni correo de contacto en Configuración) deja `[email:omitido] … motivo=…` y una fila `omitido` en `email_log`.
 - Los dos correos de un mismo evento (cliente y dueño) salen en orden con una pausa de 0,7 s (Resend limita las peticiones por segundo); un 429 se reintenta una sola vez y, si vuelve a fallar, queda `fallido` con el error.
-- No hay correo al vencer un pedido (lo hace pg_cron, sin acción de la app detrás), al rechazar un pedido ni al marcarlo entregado.
+- No hay correo al vencer un pedido (lo hace pg_cron, sin acción de la app detrás), ni al marcarlo entregado.
 - Los correos de **Supabase Auth** (confirmar correo, recuperar contraseña) **no** pasan por aquí: siguen siendo de Supabase hasta configurar el SMTP propio con Resend.
 - **Con el dominio verificado:** verifica el dominio en Resend (registros DNS), cambia `EMAIL_FROM` y deja `EMAIL_TEST_TO` vacía. No hay que tocar código.
 

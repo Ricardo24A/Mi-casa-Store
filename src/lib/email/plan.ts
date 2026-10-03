@@ -118,6 +118,17 @@ export function planOrderCancelled(store: PlanStore, order: PlanOrder, motivo: s
   ];
 }
 
+export function planOrderRejected(store: PlanStore, order: PlanOrder, motivo: string): EmailJob[] {
+  return [
+    {
+      tipo: "pedido_rechazado",
+      referencia: order.referencia,
+      to: order.email,
+      build: () => T.orderRejected(store.context, { referencia: order.referencia, nombre: order.nombre, motivo }),
+    },
+  ];
+}
+
 export function planOwnerContactMessage(
   store: PlanStore,
   messageId: string,

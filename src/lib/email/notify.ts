@@ -67,6 +67,11 @@ export function notifyOrderCancelled(orderId: string, motivo: string | null) {
   schedule("pedido_cancelado", () => forOrder("pedido_cancelado", orderId, (store, order) => P.planOrderCancelled(store, order, motivo)));
 }
 
+// 6b) Pedido rechazado por el dueño (admin_reject_order)
+export function notifyOrderRejected(orderId: string, motivo: string) {
+  schedule("pedido_rechazado", () => forOrder("pedido_rechazado", orderId, (store, order) => P.planOrderRejected(store, order, motivo)));
+}
+
 // 8) Mensaje de contacto nuevo (solo se llega aquí si create_contact_message lo aceptó: ya pasó los límites de 3 por correo y 10 por IP por hora)
 export function notifyOwnerContactMessage(messageId: string, data: { nombre: string; asunto: string | null; mensaje: string }) {
   schedule("dueno_mensaje", async () => {

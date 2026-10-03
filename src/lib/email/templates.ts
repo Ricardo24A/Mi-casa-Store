@@ -14,6 +14,7 @@ export type EmailType =
   | "comprobante_rechazado"
   | "pedido_enviado"
   | "pedido_cancelado"
+  | "pedido_rechazado"
   | "dueno_comprobante"
   | "dueno_mensaje";
 
@@ -143,6 +144,16 @@ export function orderCancelled(ctx: TemplateContext, d: OrderRef & { motivo: str
   blocks.push({ t: "p", text: "Si ya hiciste una transferencia por este pedido, escríbenos con los datos que están al final de este correo." });
   blocks.push({ t: "button", label: "Ver mi pedido", url: orderUrl(ctx, d.referencia) });
   return build(ctx, `Pedido ${d.referencia} cancelado`, "Cancelamos tu pedido.", "Cancelamos tu pedido", blocks);
+}
+
+export function orderRejected(ctx: TemplateContext, d: OrderRef & { motivo: string }): RenderedEmail {
+  return build(ctx, `Pedido ${d.referencia} rechazado`, "Rechazamos tu pedido.", "Rechazamos tu pedido", [
+    hello(d.nombre),
+    { t: "p", text: `Rechazamos tu pedido ${d.referencia}.` },
+    { t: "note", label: "Motivo", text: d.motivo },
+    { t: "p", text: "Si tienes preguntas, escríbenos o llámanos con los datos que están al final de este correo." },
+    { t: "button", label: "Ver mi pedido", url: orderUrl(ctx, d.referencia) },
+  ]);
 }
 
 // ---------------------------------------------------------------------------
