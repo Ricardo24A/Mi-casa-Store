@@ -30,8 +30,11 @@ describe("F24. tras cerrar sesión, lo viejo no sirve", { skip }, () => {
     check(assert, "F24", "acción del carrito con la cookie vieja", "code=login (sin sesión)", JSON.stringify(after.value).slice(0, 50), after.value?.ok !== true && after.value?.code === "login");
 
     const page = await getPage("/cuenta", { cookie: fresh.cookie });
-    const shows = /Mis pedidos|Mis datos|Cerrar sesión/.test(page.text.replace(/<script[\s\S]*?<\/script>/g, ""));
-    check(assert, "F24", "GET /cuenta con la cookie vieja", "redirige a /login (sin datos)", `${page.status}${/url=\/login/.test(page.text) ? " meta→/login" : ""}${shows ? " (MUESTRA LA CUENTA)" : ""}`, !shows);
+    // Los textos del menú ("Mis pedidos") salen también sin sesión: lo que cuenta es el redirect a /login y que no
+    // aparezca ningún dato de la cuenta (su correo).
+    const redirected = /http-equiv="refresh"[^>]*url=\/login/.test(page.text) || (page.status >= 300 && page.status < 400);
+    const leaks = page.text.includes(ACCOUNTS.c2.email);
+    check(assert, "F24", "GET /cuenta con la cookie vieja", "redirige a /login y no muestra datos de la cuenta", `${page.status}${redirected ? " → /login" : ""}${leaks ? " (MUESTRA EL CORREO)" : ""}`, redirected && !leaks);
 
     const refresh = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, { method: "POST", headers: { apikey: ANON, "Content-Type": "application/json" }, body: JSON.stringify({ refresh_token: fresh.refresh }) });
     check(assert, "F24", "refresh token viejo", "rechazado", refresh.status, refresh.status >= 400);

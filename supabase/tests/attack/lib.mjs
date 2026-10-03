@@ -160,12 +160,20 @@ function loadActions() {
   }
   const manifest = JSON.parse(readFileSync(".next/server/server-reference-manifest.json", "utf8")).node;
   pageOfAction = new Map();
-  for (const [id, info] of Object.entries(manifest)) {
-    const page = Object.keys(info.workers)[0] ?? "";
+  const toRoute = (page) => {
     // "app/(tienda)/checkout/page" -> "/checkout"; "[x]" -> "x"
     const route = "/" + page.replace(/^app\//, "").replace(/\/page$/, "").split("/").filter((p) => !/^\(.*\)$/.test(p)).join("/").replace(/\[([^\]]+)\]/g, "x");
-    pageOfAction.set(id, route === "/" ? "/" : route);
+    return route;
+  };
+  for (const [id, info] of Object.entries(manifest)) {
+    // Se prefiere una página pública: algunas acciones (carrito) existen también en páginas /admin, donde el proxy desvía.
+    const pages = Object.keys(info.workers);
+    const routes = pages.map(toRoute);
+    // Mejor una ruta pública y sin parámetros dinámicos (con "[x]" la página ficticia fallaría al volver a renderizar).
+    const good = routes.find((r, i) => !r.startsWith("/admin") && !pages[i].includes("["));
+    pageOfAction.set(id, good ?? routes.find((r) => !r.startsWith("/admin")) ?? routes[0] ?? "/");
   }
+
 }
 
 export function actionId(name) {

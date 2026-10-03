@@ -35,13 +35,21 @@ describe("F22. cookie mc_recuperacion falsificada, de otro usuario, vencida o ma
       ["vencimiento no numérico", `${c1.userId}.mañana.AAAA`],
       ["la cookie de sesión de otro usuario copiada como recuperación", c2.cookie.split("; ")[0].split("=")[1] ?? "x"],
     ];
+    // El límite es de 5 intentos con contraseña actual cada 15 minutos por usuario: solo las 4 primeras variantes
+    // gastan un intento; las demás comprueban únicamente que se exige la contraseña actual (eso no cuenta).
+    let tried = 0;
     for (const [label, value] of forged) {
       const cookie = `${c1.cookie}; mc_recuperacion=${value}`;
       const noCurrent = await changeFor(cookie, {});
-      const wrongCurrent = await changeFor(cookie, { current: "Incorrecta-zz-sec-1" });
       const changed = (r) => r.redirect && /\/login/.test(r.redirect);
-      check(assert, "F22", `cookie ${label}: sin contraseña actual`, "exige la contraseña actual", `${noCurrent.value?.fieldErrors?.current ?? noCurrent.value?.error ?? noCurrent.redirect ?? "?"}`.slice(0, 60), !changed(noCurrent) && Boolean(noCurrent.value?.fieldErrors?.current || noCurrent.value?.error));
-      check(assert, "F22", `cookie ${label}: con una actual incorrecta`, "rechazada", `${wrongCurrent.value?.fieldErrors?.current ?? wrongCurrent.value?.error ?? wrongCurrent.redirect ?? "?"}`.slice(0, 60), !changed(wrongCurrent));
+      check(assert, "F22", `cookie ${label}: sin contraseña actual`, "exige la contraseña actual", `${noCurrent.value?.fieldErrors?.current ?? noCurrent.value?.error ?? noCurrent.redirect ?? "?"}`.slice(0, 60), !changed(noCurrent) && Boolean(noCurrent.value?.fieldErrors?.current));
+      if (tried < 4) {
+        tried++;
+        const wrong = await changeFor(cookie, { current: "Incorrecta-zz-sec-1" });
+        const msg = wrong.value?.fieldErrors?.current ?? wrong.value?.error ?? wrong.redirect ?? "?";
+        if (/Demasiados intentos/.test(msg)) rec("F22", `cookie ${label}: con una actual incorrecta`, "La contraseña actual no es correcta", "bloqueado por el límite de cambio de contraseña (5 cada 15 min)", "bloqueado");
+        else check(assert, "F22", `cookie ${label}: con una actual incorrecta`, "La contraseña actual no es correcta", String(msg).slice(0, 60), !changed(wrong) && /actual no es correcta/.test(msg));
+      }
     }
     check(assert, "F22", "la contraseña del cliente 1 sigue funcionando", "sigue igual", String(await stillWorks(c1)), await stillWorks(c1));
   });

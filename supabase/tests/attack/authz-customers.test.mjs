@@ -56,8 +56,9 @@ describe("A1. el cliente 1 contra los datos del cliente 2 (API REST)", opts, () 
     for (const [label, path] of reads) {
       const r = await asC1("GET", path);
       // En las relaciones embebidas basta con que no traigan datos hijos de otro usuario.
-      const leakedChild = Array.isArray(r.json) && r.json.some((row) => Object.values(row).some((x) => (Array.isArray(x) && x.length > 0) || (x && typeof x === "object" && !Array.isArray(x) && Object.keys(x).length > 0 && label.includes("embebida"))));
-      check(assert, "A1", `leer ${label}`, "sin filas ajenas", `${r.status}, ${Array.isArray(r.json) ? r.json.length : "-"} filas${leakedChild ? " (con datos hijos)" : ""}`, !gotRows(r) || (label.includes("producto") && !leakedChild));
+      // Producto → líneas: el producto es público, así que se exige que NINGUNA línea hija sea del pedido del cliente 2.
+      const leakedChild = label.includes("producto") && JSON.stringify(r.json ?? []).includes(v.order.id);
+      check(assert, "A1", `leer ${label}`, "sin filas ajenas", `${r.status}, ${Array.isArray(r.json) ? r.json.length : "-"} filas${leakedChild ? " (CON LÍNEAS DEL CLIENTE 2)" : ""}`, label.includes("producto") ? !leakedChild : !gotRows(r));
     }
   });
 

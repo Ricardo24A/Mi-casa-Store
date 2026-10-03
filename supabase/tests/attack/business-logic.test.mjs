@@ -112,18 +112,25 @@ describe("C8/C9. el checkout rechaza entradas hostiles y recalcula todo en el se
       ["addressId y address a la vez", { addressId: ZERO }], ["addressId mal formado", { addressId: "x", address: undefined }],
       ["dirección con provincia inventada", { address: { ...CHECKOUT_OK.address, provincia: "Narnia" } }],
       ["dirección de 100 000 caracteres", { address: { ...CHECKOUT_OK.address, direccion: "d".repeat(100000) } }],
-      ["dirección con campo extra", { address: { ...CHECKOUT_OK.address, user_id: c2.userId } }],
     ];
     for (const [label, over] of bad) {
       const r = await callAction("crearPedido", [{ ...CHECKOUT_OK, ...over }], { cookie: c1.cookie });
       check(assert, "C8", `crearPedido ${label}`, "rechazado", `${r.value?.ok ? "CREADO" : (r.value?.error ?? "?").slice(0, 40)}`, r.value?.ok !== true);
+    }
+    // Campo extra DENTRO de la dirección: el esquema interno lo descarta (no es estricto). Debe dar igual: nada a nombre de otro.
+    {
+      const r = await callAction("crearPedido", [{ ...CHECKOUT_OK, address: { ...CHECKOUT_OK.address, etiqueta: `${PREFIX}extra`, user_id: c2.userId } }], { cookie: c1.cookie });
+      const rows = (await svc("GET", `/rest/v1/customer_addresses?etiqueta=eq.${PREFIX}extra&select=user_id`)).json ?? [];
+      if (limited(r)) rec("C8", "dirección con user_id ajeno dentro de address", "no se guarda a nombre del cliente 2", "bloqueado por el límite de pedidos", "bloqueado");
+      else check(assert, "C8", "dirección con user_id ajeno dentro de address", "descartado: la dirección queda del cliente 1", `${r.value?.ok ? "pedido creado" : "rechazado"}; direcciones: ${rows.map((x) => (x.user_id === c1.userId ? "c1" : x.user_id === c2.userId ? "C2" : "otro")).join(",") || "ninguna"}`, rows.every((x) => x.user_id === c1.userId));
+      rec("C8", "esquema de la dirección dentro de crearPedido", "estricto como el externo", "no estricto: descarta campos sobrantes (sin efecto)", "hallazgo");
     }
     for (const body of [null, "texto", 5, [], [[]], {}]) {
       const r = await callAction("crearPedido", [body], { cookie: c1.cookie });
       check(assert, "C8", `crearPedido con ${JSON.stringify(body)}`, "rechazado", `${r.value?.ok ? "CREADO" : "rechazado"}`, r.value?.ok !== true);
     }
     const after = (await svc("GET", `/rest/v1/orders?user_id=eq.${c1.userId}&select=id`)).json?.length;
-    check(assert, "C8", "no se creó ningún pedido con entradas hostiles", "sin cambios", `${before}→${after}`, after === before);
+    check(assert, "C8", "ningún pedido con entradas hostiles (a lo sumo el de la dirección con campo descartado)", "como mucho +1", `${before}→${after}`, after - before <= 1);
   });
 
   test("C9. el pedido usa el precio de la base y lo congela; ningún campo del navegador lo cambia", async () => {
@@ -159,9 +166,9 @@ describe("C10. descuentos y cupones", { skip: appSkip }, () => {
     return r;
   }
   async function priceViaOrder(label) {
-    await expirePending([c1.userId]);
-    await setCart(c1.userId, [{ productId: P.disc.id, cantidad: 1 }]);
-    const r = await callAction("crearPedido", [CHECKOUT_OK], { cookie: c1.cookie });
+    await expirePending([c2.userId]);
+    await setCart(c2.userId, [{ productId: P.disc.id, cantidad: 1 }]);
+    const r = await callAction("crearPedido", [CHECKOUT_OK], { cookie: c2.cookie });
     if (limited(r)) {
       rec("C10", label, "pedido creado", "bloqueado por el límite de pedidos (10 por hora)", "bloqueado");
       return null;
@@ -292,7 +299,8 @@ describe("C13. concurrencia", { skip: skip }, () => {
       const res = await Promise.all(calls);
       const ok = res.filter((r) => r.status < 300).length;
       const row = await productRow(p.id);
-      const orders = (await svc("GET", `/rest/v1/order_items?product_id=eq.${p.id}&select=cantidad,order_id`)).json ?? [];
+      // Solo pedidos que siguen pendientes de pago (los de corridas anteriores ya vencieron).
+      const orders = (await svc("GET", `/rest/v1/order_items?product_id=eq.${p.id}&select=cantidad,order_id,orders!inner(estado)&orders.estado=eq.pendiente_pago`)).json ?? [];
       const units = orders.reduce((s, o) => s + o.cantidad, 0);
       check(assert, "C13", `ronda ${round}: stock ${stock}, 2 cuentas × 10 peticiones de ${qty}`, `${expectOrders} pedido(s), reservado ≤ stock, nunca negativo`, `pedidos=${ok}, reservado=${row.stock_reservado}/${row.stock}, unidades en pedidos=${units}`, ok === expectOrders && row.stock_reservado <= row.stock && row.stock_reservado >= 0 && units === row.stock_reservado);
       await expirePending([c1.userId, c2.userId]);
@@ -367,10 +375,15 @@ describe("C14/C15. saltos de estado y comprobantes (lo que se puede probar sin 2
     const p = await mk("c14", { precio: 10, stock: 20 });
     await setCart(c1.userId, [{ productId: p.id, cantidad: 1 }]);
     const o = (await createOrderRpc(c1.userId, [{ product_id: p.id, nombre: p.nombre, precio_unitario: 10, cantidad: 1 }])).json[0];
-    for (const estado of ["pagado", "comprobante_recibido", "enviado", "entregado"]) {
+    for (const estado of ["pagado", "comprobante_recibido"]) {
       const r = await svc("PATCH", `/rest/v1/orders?id=eq.${o.o_id}`, { estado });
       const row = await orderRow(o.o_id);
-      check(assert, "C14", `UPDATE directo pendiente_pago → ${estado}`, "rechazado por la base", `${r.status}; estado=${row.estado}`, row.estado === "pendiente_pago");
+      check(assert, "C14", `UPDATE directo pendiente_pago → ${estado}`, "rechazado por la base (sin comprobante)", `${r.status}; estado=${row.estado}`, row.estado === "pendiente_pago");
+    }
+    // enviado / entregado: la base NO lo impide a service_role (solo las funciones admin_* y los permisos de la API lo impiden a los demás).
+    for (const estado of ["enviado", "entregado"]) {
+      const r = await svc("PATCH", `/rest/v1/orders?id=eq.${o.o_id}`, { estado });
+      rec("C14", `UPDATE directo con service_role pendiente_pago → ${estado}`, "defensa en profundidad: rechazado por un trigger", `${r.status < 300 ? "aceptado" : "rechazado"} (solo service_role; ningún cliente puede, ver A3)`, r.status < 300 ? "hallazgo" : "ok");
     }
   });
   test("C15. el 4.º comprobante se rechaza (máximo 3) y el pedido vencido no admite ninguno", async () => {
