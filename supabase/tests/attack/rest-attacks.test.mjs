@@ -95,6 +95,7 @@ const ADMIN_RPCS = [
   ["admin_mark_delivered", { p_order_id: ZERO }],
   ["admin_mark_message_read", { p_id: ZERO }],
   ["admin_archive_message", { p_id: ZERO }],
+  ["admin_move_category", { p_id: ZERO, p_direction: "up" }],
   ["admin_dashboard_summary", {}],
   ["admin_stock_alerts", { p_limit: 5 }],
 ];
@@ -174,19 +175,26 @@ describe("anon", { skip: missing && "faltan NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBL
   });
 });
 
-describe("cliente normal", { skip: missing && "faltan variables de Supabase" }, () => {
-  let token = process.env.ATTACK_CUSTOMER_TOKEN || null;
-  let userId = null;
-  const hasCreds = Boolean(token || (process.env.ATTACK_CUSTOMER_EMAIL && process.env.ATTACK_CUSTOMER_PASSWORD));
+// El login se intenta ANTES de declarar las pruebas: si las cuentas ATTACK_* no existen en el proyecto (login
+// rechazado), la parte de cliente se SALTA con un aviso en vez de fallar en cadena.
+let customerToken = process.env.ATTACK_CUSTOMER_TOKEN || null;
+let customerSkipReason = null;
+if (!missing && !customerToken) {
+  if (process.env.ATTACK_CUSTOMER_EMAIL && process.env.ATTACK_CUSTOMER_PASSWORD) {
+    const r = await call("POST", "/auth/v1/token?grant_type=password", { body: { email: process.env.ATTACK_CUSTOMER_EMAIL, password: process.env.ATTACK_CUSTOMER_PASSWORD } });
+    if (r.status === 200) customerToken = r.json.access_token;
+    else customerSkipReason = `la cuenta ATTACK_CUSTOMER no existe o su contraseña es incorrecta en este proyecto (login ${r.status})`;
+  } else {
+    customerSkipReason = "sin ATTACK_CUSTOMER_EMAIL/PASSWORD ni ATTACK_CUSTOMER_TOKEN";
+  }
+}
 
-  test("inicia sesión como cliente de prueba (y no es admin)", { skip: !hasCreds && "sin ATTACK_CUSTOMER_EMAIL/PASSWORD ni ATTACK_CUSTOMER_TOKEN" }, async () => {
-    if (!token) {
-      const r = await call("POST", "/auth/v1/token?grant_type=password", {
-        body: { email: process.env.ATTACK_CUSTOMER_EMAIL, password: process.env.ATTACK_CUSTOMER_PASSWORD },
-      });
-      assert.equal(r.status, 200, "no se pudo iniciar sesión con la cuenta de prueba");
-      token = r.json.access_token;
-    }
+describe("cliente normal", { skip: (missing && "faltan variables de Supabase") || (customerSkipReason ?? false) }, () => {
+  let token = customerToken;
+  let userId = null;
+  const hasCreds = Boolean(token);
+
+  test("inicia sesión como cliente de prueba (y no es admin)", async () => {
     const me = await call("GET", "/auth/v1/user", { token });
     assert.equal(me.status, 200);
     userId = me.json.id;

@@ -145,15 +145,49 @@ Código en [`src/lib/email/`](src/lib/email/): plantillas (`templates.ts`, `rend
 
 El texto del cliente (`docs/legal/Documentos_Legales.pdf`) está publicado tal cual en [`src/content/legal/`](src/content/legal/) y se muestra en `/privacidad`, `/terminos` y `/cookies`. Cada documento tiene su fecha y su versión (`LEGAL_VERSIONS`). Para publicar un texto nuevo: edita el archivo del documento, cambia su `actualizado` y su `version`. La versión se guarda en el registro y en cada pedido (casilla obligatoria de Términos y Privacidad, validada en el servidor). En los Términos el plazo de pago no está escrito: se muestra el valor real de `horas_limite_pago` de Configuración.
 
-### Pruebas de ataque contra la API (solo en desarrollo)
+### Pruebas de ataque (solo en desarrollo)
 
-[`supabase/tests/attack/rest-attacks.test.mjs`](supabase/tests/attack/rest-attacks.test.mjs) intenta, con el token anon y con el de un cliente normal, leer lo ajeno, escribir catálogo, descuentos, pedidos y estados, ejecutar las funciones `admin_*` y las de servidor, y subir o leer archivos de Storage. **Todo debe fallar.** Lee el entorno (sin llaves dentro) y no debe apuntar al proyecto de producción:
+Una batería de ataques repetibles, sin herramientas externas, contra **desarrollo** (nunca producción: se niega a correr si `NEXT_PUBLIC_SITE_URL` no es local). **Todo ataque debe fallar**; cada intento queda impreso con lo esperado y lo real, y los desvíos que no son un ataque exitoso (p. ej. un código HTTP distinto del pedido) salen como `HALLAZ`, y lo que no se pudo probar como `BLOQ`.
 
-```bash
-npm run test:attack
-```
+**Qué hace falta**
 
-Sin más variables corre la parte anónima. Para la parte de cliente agrega a `.env.local` una cuenta de CLIENTE de prueba (nunca la del dueño): `ATTACK_CUSTOMER_EMAIL` y `ATTACK_CUSTOMER_PASSWORD` (o `ATTACK_CUSTOMER_TOKEN`) y, opcional, `ATTACK_OTHER_USER_ID`. Imprime al final cada intento con su resultado esperado y real.
+1. Un build y dos servidores locales de producción (`next start`), porque login, registro y contacto exigen Turnstile:
+   ```bash
+   npm run build
+   npm run start                                          # puerto 3100, "como producción sin clave de Turnstile"
+   node supabase/tests/attack/serve-test-turnstile.mjs    # puerto 3101, con la clave de PRUEBA pública de Cloudflare
+   ```
+2. Variables en `.env.local` (sin llaves en el código): las de Supabase, `SUPABASE_SERVICE_ROLE_KEY` (solo para preparar datos `zz-sec-` y comprobar resultados), y tres cuentas de prueba **que tú creas** (las pruebas nunca crean cuentas):
+
+   | Variable | Cuenta |
+   |---|---|
+   | `ATTACK_CUSTOMER_EMAIL` / `ATTACK_CUSTOMER_PASSWORD` | cliente 1 (rol `customer`) |
+   | `ATTACK_CUSTOMER2_EMAIL` / `ATTACK_CUSTOMER2_PASSWORD` | cliente 2 (la "víctima" de los ataques del cliente 1) |
+   | `ATTACK_ADMIN_NO2FA_EMAIL` / `ATTACK_ADMIN_NO2FA_PASSWORD` | administrador (`role = admin` puesto a mano) que **nunca** completa el 2FA: sesión `aal1` |
+
+   Opcionales: `ATTACK_APP_URL` (por defecto `http://localhost:3101`), `ATTACK_APP_STRICT_URL` (`http://localhost:3100`), `ATTACK_REPORT_FILE` (guarda cada intento en JSON, una línea por intento). Sin una cuenta, las pruebas que la necesitan se saltan con el motivo.
+3. Correr:
+   ```bash
+   npm run test:attack      # todo, un archivo a la vez
+   npm test                 # incluye también las pruebas unitarias de ataque (correos y archivos)
+   ```
+
+**Qué cubre cada archivo de [`supabase/tests/attack/`](supabase/tests/attack/)**
+
+| Archivo | Bloque |
+|---|---|
+| `rest-attacks.test.mjs` | API REST con anon y con un cliente: leer lo ajeno, escribir catálogo, pedidos y estados, funciones `admin_*` y de servidor, Storage |
+| `authz-customers.test.mjs` | A. Cliente 1 contra cliente 2 (pedidos, comprobantes, direcciones, carrito, perfil, Storage), subirse el rol, tocar su propio pedido, dirección o carrito ajenos |
+| `admin-no2fa.test.mjs` | B. Admin sin 2FA: RPC, tablas, Storage, rutas `/admin` y acciones del panel; cliente y visitante contra `/admin` |
+| `business-logic.test.mjs` | C. Cantidades hostiles, totales recalculados, descuentos y cupones, productos inactivos, stock y concurrencia (20 pedidos simultáneos, 5 del mismo cliente, comprobantes a la vez), límite de comprobantes |
+| `files-upload.test.mjs` / `storage-access.test.mjs` | D. Subidas hostiles por la app; acceso a Storage: rutas adivinadas, URLs firmadas vencidas o alteradas, listados, recorrido de rutas |
+| `public-surface.test.mjs` | E y F y G. Inyección y parámetros extraños, contenido hostil en contacto, enumeración de cuentas, redirecciones, CSRF, límites de uso, IP falsas, cuerpos gigantes, ráfagas |
+| `session-auth.test.mjs` / `zz-logout.test.mjs` | F. Cookie de recuperación falsificada, cambio de contraseña, límites, cierre de sesión |
+| `config-headers.test.mjs` | H. Cabeceras de seguridad, métodos, CORS, errores sin trazas, rutas de desarrollo, mapas de código, robots y sitemap |
+
+Lo que crean las pruebas lleva el prefijo `zz-sec-` (productos, categorías, descuentos, pedidos, mensajes, archivos). **No borran nada**: los pedidos de prueba se hacen vencer por la vía normal y los descuentos se desactivan. La limpieza es un SQL que revisas y corres tú: [`supabase/tests/attack/limpieza-zz-sec.sql`](supabase/tests/attack/limpieza-zz-sec.sql).
+
+Efectos secundarios a conocer: gastan los contadores de intentos (login, contacto, comprobantes y cambio de contraseña) de las cuentas de prueba; se vencen solos en 15 a 60 minutos. Los límites **por IP** usan una IP propia por ejecución, para no gastar el contador de `127.0.0.1`.
 
 ### Pruebas de la base de datos
 
