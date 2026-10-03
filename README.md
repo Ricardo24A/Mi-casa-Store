@@ -61,7 +61,8 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 21. `migrations/20260929000021_order_limits_rate_limits.sql`: `create_order` acepta como máximo 3 pedidos en `pendiente_pago` por usuario, bloquea el carrito de la cuenta y exige que las líneas sean las del carrito (un doble envío no crea dos pedidos); tabla `rate_limits` y `rate_limit_hit()` (solo `service_role`, claves HMAC) para el límite de intentos, y el cron `cleanup-rate-limits` (pg_cron, cada hora).
 22. `migrations/20260929000022_email_log.sql`: registro de correos (`email_log`: tipo, referencia, huella HMAC y máscara del destinatario, estado) con restricción única para no enviar dos veces el mismo evento, funciones `email_log_claim` y `email_log_finish` (solo `service_role`), lectura solo para el admin con 2FA y limpieza a los 90 días (pg_cron `cleanup-email-log`).
 23. `migrations/20260929000023_email_log_omitido.sql`: `email_log` admite el estado `omitido` (un correo sin destinatario válido deja una fila con el motivo, sin guardar ninguna dirección).
-24. `seed.sql` (después de todas las migraciones): categorías, subcategorías y plantillas de productos (idempotente).
+24. `migrations/20260929000024_terms_acceptance.sql`: constancia de aceptación de los Términos y la Política de Privacidad (`profiles` y `orders`: `terminos_aceptados_en`, `terminos_version`), el trigger `handle_new_user` guarda la versión del registro y `record_order_terms` (solo `service_role`) la guarda en el pedido.
+25. `seed.sql` (después de todas las migraciones): categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.
 
@@ -139,6 +140,10 @@ Código en [`src/lib/email/`](src/lib/email/): plantillas (`templates.ts`, `rend
 - No hay correo al vencer un pedido (lo hace pg_cron, sin acción de la app detrás), ni al marcarlo entregado.
 - Los correos de **Supabase Auth** (confirmar correo, recuperar contraseña) **no** pasan por aquí: siguen siendo de Supabase hasta configurar el SMTP propio con Resend.
 - **Con el dominio verificado:** verifica el dominio en Resend (registros DNS), cambia `EMAIL_FROM` y deja `EMAIL_TEST_TO` vacía. No hay que tocar código.
+
+### Documentos legales
+
+El texto del cliente (`docs/legal/Documentos_Legales.pdf`) está publicado tal cual en [`src/content/legal/`](src/content/legal/) y se muestra en `/privacidad`, `/terminos` y `/cookies`. Cada documento tiene su fecha y su versión (`LEGAL_VERSIONS`). Para publicar un texto nuevo: edita el archivo del documento, cambia su `actualizado` y su `version`. La versión se guarda en el registro y en cada pedido (casilla obligatoria de Términos y Privacidad, validada en el servidor). En los Términos el plazo de pago no está escrito: se muestra el valor real de `horas_limite_pago` de Configuración.
 
 ### Pruebas de ataque contra la API (solo en desarrollo)
 

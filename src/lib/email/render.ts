@@ -45,6 +45,8 @@ export interface StoreFooter {
   telefonos: string[];
   direccion: string | null;
   horario: string | null;
+  /** Enlaces del pie (documentos legales), con URL absoluta. */
+  links?: { label: string; url: string }[];
 }
 
 export interface EmailContent {
@@ -110,9 +112,18 @@ function footerLines(s: StoreFooter): string[] {
   return lines;
 }
 
+function footerLinksHtml(s: StoreFooter): string {
+  if (!s.links?.length) return "";
+  return `<br>${s.links.map((l) => `<a href="${esc(l.url)}" style="color:${INK_SOFT};text-decoration:underline;">${esc(l.label)}</a>`).join(" · ")}`;
+}
+
+function footerLinksText(s: StoreFooter): string[] {
+  return (s.links ?? []).map((l) => `${l.label}: ${l.url}`);
+}
+
 export function renderHtml(c: EmailContent): string {
   const subject = oneLine(c.subject);
-  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>${esc(subject)}</title></head><body style="margin:0;padding:0;background-color:${BG};"><div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(oneLine(c.preheader, 140))}</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BG}" style="background-color:${BG};"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;"><tr><td style="padding:0 4px 16px 4px;font-family:${FONT};font-size:22px;font-weight:600;color:${ACCENT};">${esc(c.store.nombre)}</td></tr><tr><td style="background-color:#FFFFFF;border:1px solid ${LINE};border-radius:12px;padding:24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:0 0 16px 0;font-family:${FONT};font-size:22px;line-height:28px;font-weight:600;color:${INK};">${esc(c.title)}</td></tr>${c.blocks.map(htmlBlock).join("")}</table></td></tr><tr><td style="padding:16px 4px 0 4px;font-family:${FONT};font-size:13px;line-height:20px;color:${INK_SOFT};">${footerLines(c.store).map(esc).join("<br>")}</td></tr></table></td></tr></table></body></html>`;
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>${esc(subject)}</title></head><body style="margin:0;padding:0;background-color:${BG};"><div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(oneLine(c.preheader, 140))}</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BG}" style="background-color:${BG};"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;"><tr><td style="padding:0 4px 16px 4px;font-family:${FONT};font-size:22px;font-weight:600;color:${ACCENT};">${esc(c.store.nombre)}</td></tr><tr><td style="background-color:#FFFFFF;border:1px solid ${LINE};border-radius:12px;padding:24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:0 0 16px 0;font-family:${FONT};font-size:22px;line-height:28px;font-weight:600;color:${INK};">${esc(c.title)}</td></tr>${c.blocks.map(htmlBlock).join("")}</table></td></tr><tr><td style="padding:16px 4px 0 4px;font-family:${FONT};font-size:13px;line-height:20px;color:${INK_SOFT};">${footerLines(c.store).map(esc).join("<br>")}${footerLinksHtml(c.store)}</td></tr></table></td></tr></table></body></html>`;
 }
 
 function textBlock(b: Block): string {
@@ -135,7 +146,7 @@ function textBlock(b: Block): string {
 }
 
 export function renderText(c: EmailContent): string {
-  return [c.title, ...c.blocks.map(textBlock), "--", ...footerLines(c.store)].join("\n\n").replace(/\n\n--\n\n/, "\n\n--\n");
+  return [c.title, ...c.blocks.map(textBlock), "--", ...footerLines(c.store), ...footerLinksText(c.store)].join("\n\n").replace(/\n\n--\n\n/, "\n\n--\n");
 }
 
 export function renderEmail(c: EmailContent): RenderedEmail {

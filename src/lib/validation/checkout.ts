@@ -2,6 +2,7 @@ import { z } from "zod";
 import { PROVINCIAS } from "@/config/ecuador";
 import { text, uuid } from "./common";
 import { phoneSchema } from "./account";
+import { acceptTermsBoolean } from "./terms";
 
 /** Dirección nueva escrita en el checkout. Quién recibe y el teléfono salen de los datos de contacto. */
 export const checkoutAddressSchema = z.object({
@@ -24,6 +25,8 @@ export const checkoutInputSchema = z
     telefono: phoneSchema,
     addressId: uuid.optional(),
     address: checkoutAddressSchema.optional(),
+    // Casilla obligatoria de los Términos y la Política de Privacidad, validada en el servidor.
+    acepta: acceptTermsBoolean,
   })
   .strict()
   .refine((v) => Boolean(v.addressId) !== Boolean(v.address), {

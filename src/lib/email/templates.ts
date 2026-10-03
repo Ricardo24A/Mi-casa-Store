@@ -32,8 +32,16 @@ export interface TemplateContext {
 
 const orderUrl = (ctx: TemplateContext, referencia: string) => `${ctx.siteUrl}/confirmacion/${encodeURIComponent(referencia)}`;
 
+/** Documentos legales que existen como páginas de la tienda (ver src/content/legal). */
+export const EMAIL_LEGAL_PATHS = [
+  { label: "Privacidad", path: "/privacidad" },
+  { label: "Términos y Condiciones", path: "/terminos" },
+  { label: "Cookies", path: "/cookies" },
+] as const;
+
 function build(ctx: TemplateContext, subject: string, preheader: string, title: string, blocks: Block[]): RenderedEmail {
-  const content: EmailContent = { subject, preheader, title, blocks, store: ctx.store };
+  const links = EMAIL_LEGAL_PATHS.map((l) => ({ label: l.label, url: `${ctx.siteUrl}${l.path}` }));
+  const content: EmailContent = { subject, preheader, title, blocks, store: { ...ctx.store, links } };
   return renderEmail(content);
 }
 

@@ -3,6 +3,7 @@ import { cacheLife, cacheTag } from "next/cache";
 import { Suspense } from "react";
 import { BrandLink } from "@/components/brand-icons";
 import { Container } from "@/components/ui/container";
+import { LEGAL_LINKS } from "@/content/legal";
 import { CATALOG_TAG, getCategoryTree } from "@/lib/catalog";
 import { formatEcPhone, telHref, whatsappHref } from "@/lib/phone-ec";
 import { STORE_INFO_TAG, getPublicStoreInfo } from "@/lib/store-info";
@@ -36,7 +37,7 @@ async function getFooterData() {
 
 /** Respaldo mientras llegan los datos del pie: la misma franja, sin contenido. */
 export function FooterFallback() {
-  return <footer aria-busy="true" className="mt-12 h-56 bg-accent-hover" />;
+  return <footer aria-busy="true" className="mt-12 h-56 bg-accent-hover print:hidden" />;
 }
 
 /** Solo enlaces a páginas que existen. Los demás (legales) se añaden cuando existan. */
@@ -46,7 +47,7 @@ export async function Footer() {
   const hasContact = Boolean(info.email || phones.length > 0 || info.direccion);
 
   return (
-    <footer className="on-dark mt-12 bg-accent-hover text-bg">
+    <footer className="on-dark mt-12 bg-accent-hover text-bg print:hidden">
       <Container className="grid gap-8 py-12 sm:grid-cols-2 lg:grid-cols-3">
         <div>
           <p className="text-lg font-semibold">{info.nombre}</p>
@@ -94,6 +95,19 @@ export async function Footer() {
                 Contacto
               </Link>
             </li>
+          </ul>
+        </nav>
+
+        <nav aria-label="Información legal">
+          <p className="mb-2 text-sm font-semibold">Información</p>
+          <ul className="text-sm">
+            {LEGAL_LINKS.map((link) => (
+              <li key={link.href}>
+                <Link href={link.href} className={linkClass}>
+                  {link.label}
+                </Link>
+              </li>
+            ))}
           </ul>
         </nav>
 

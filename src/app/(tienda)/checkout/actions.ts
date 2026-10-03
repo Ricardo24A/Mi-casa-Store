@@ -6,6 +6,7 @@ import { cartLineStatus, lineNotice } from "@/lib/cart-status";
 import { CHECKOUT_GENERIC_ERROR, checkoutErrorFromDb, type CheckoutErrorCode } from "@/lib/checkout-errors";
 import { readCartLines } from "@/lib/cart-server";
 import { getProductsByIds } from "@/lib/catalog";
+import { acceptanceVersion } from "@/content/legal";
 import { notifyOrderCreated } from "@/lib/email/notify";
 import { computeOrderTotals, shippingToArrange } from "@/lib/order-totals";
 import { checkRateLimits } from "@/lib/rate-limit";
@@ -199,6 +200,15 @@ export async function crearPedido(input: unknown): Promise<CheckoutResult> {
   // que hizo create_order (ahora + horas del plazo), para que el correo salga igual.
   const { data: saved } = await admin.from("orders").select("vence_en").eq("id", row.o_id).maybeSingle();
   const venceEn = saved?.vence_en ?? new Date(Date.now() + settings.horas_limite_pago * 3_600_000).toISOString();
+
+  // Constancia: cuándo y qué versión de los Términos y la Política de Privacidad aceptó con este pedido.
+  // Si no se pudiera guardar, el pedido sigue (la casilla ya se validó arriba) y queda una línea en el registro.
+  const { error: termsError } = await admin.rpc("record_order_terms", {
+    p_order_id: row.o_id,
+    p_user_id: user.id,
+    p_version: acceptanceVersion(),
+  });
+  if (termsError) console.log(`[checkout] no se pudo guardar la constancia de aceptación (${termsError.code ?? "error"})`);
 
   // El correo se programa con after(): no hace esperar al cliente y nunca puede romper este flujo.
   notifyOrderCreated({

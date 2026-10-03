@@ -10,6 +10,7 @@ import {
   type AccountFormState,
 } from "@/app/(acceso)/actions";
 import { TurnstileWidget } from "@/components/auth/turnstile-widget";
+import { AcceptTerms } from "@/components/legal/accept-terms";
 import { Field, FormError, FormSuccess, SubmitButton } from "@/components/ui/form-controls";
 
 const initial: AccountFormState = {};
@@ -84,6 +85,7 @@ export function RegisterForm({ next }: { next?: string }) {
         required
         error={e.confirm}
       />
+      <AcceptTerms error={e.acepta} defaultChecked={state.values?.acepta === "on"} key={`a-${state.values?.acepta}`} />
       <TurnstileWidget resetKey={state} />
       <FormError>{state.error}</FormError>
       <SubmitButton pendingLabel="Creando cuenta…">Crear cuenta</SubmitButton>

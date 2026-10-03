@@ -7,6 +7,7 @@ import { ShoppingBag } from "lucide-react";
 import { fetchCartProducts } from "@/app/(tienda)/carrito/actions";
 import { crearPedido, type CheckoutResult } from "@/app/(tienda)/checkout/actions";
 import { ProductImage } from "@/components/store/product-image";
+import { AcceptTerms } from "@/components/legal/accept-terms";
 import { buttonClass } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, FormError, SelectField } from "@/components/ui/form-controls";
@@ -125,6 +126,7 @@ export function CheckoutView({
       const res = await crearPedido({
         nombre: text("nombre"),
         telefono: text("telefono"),
+        acepta: formData.get("acepta") === "on",
         ...(useNew
           ? {
               address: {
@@ -153,7 +155,15 @@ export function CheckoutView({
 
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <form action={submit} className="space-y-8" noValidate>
+      {/* onSubmit en vez de action: React vacía el formulario tras una acción y un error borraría lo escrito y la casilla. */}
+      <form
+        onSubmit={(ev) => {
+          ev.preventDefault();
+          if (!pending) submit(new FormData(ev.currentTarget));
+        }}
+        className="space-y-8"
+        noValidate
+      >
         <section aria-labelledby="contacto" className="space-y-4">
           <h2 id="contacto" className="text-xl font-semibold text-ink">Tus datos</h2>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -223,6 +233,7 @@ export function CheckoutView({
         {/* Primero los avisos; debajo, el botón principal y el enlace que ayuda a resolver el aviso,
             separados 16 px (apilados en celular, con el botón primero). */}
         <div className="space-y-3">
+          <AcceptTerms id="acepta-checkout" error={e.acepta} />
           <FormError>{result?.error}</FormError>
           {!canPay && (
             <p role="alert" className="text-sm text-sale-ink">

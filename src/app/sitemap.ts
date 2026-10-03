@@ -11,6 +11,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${base}/` },
     { url: `${base}/catalogo` },
     { url: `${base}/contacto` },
+    { url: `${base}/privacidad` },
+    { url: `${base}/terminos` },
+    { url: `${base}/cookies` },
     ...tree.flatMap((cat) => [
       { url: `${base}/categoria/${cat.slug}` },
       ...cat.subcategorias.map((sub) => ({ url: `${base}/categoria/${sub.slug}` })),

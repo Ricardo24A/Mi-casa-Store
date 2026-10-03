@@ -2921,6 +2921,115 @@ begin
   reset role;
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- Constancia de aceptación de términos (migración 24)
+-- Usuarios y pedidos nuevos de esta corrida: los datos reales no cambian el resultado.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  admin_claims constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}';
+  v constant text := 'terminos 2026-10-02 + privacidad 2026-10-02';
+  u1 uuid := gen_random_uuid();
+  u2 uuid := gen_random_uuid();
+  u3 uuid := gen_random_uuid();
+  u4 uuid := gen_random_uuid();
+  o1 uuid := gen_random_uuid();
+  o2 uuid := gen_random_uuid();
+  claims1 text;
+  p record;
+  n integer;
+begin
+  -- ---- Registro: el trigger guarda la versión; el rol sigue siendo customer ----------------------------
+  insert into auth.users (id, raw_user_meta_data) values
+    (u1, jsonb_build_object('full_name', 'Ana', 'terminos_version', v, 'role', 'admin')),
+    (u2, jsonb_build_object('full_name', 'Beto')),
+    (u3, jsonb_build_object('full_name', 'Caro', 'terminos_version', '<script>alert(1)</script>')),
+    (u4, jsonb_build_object('full_name', 'Dani', 'terminos_version', repeat('a', 200)));
+
+  select * into p from public.profiles where id = u1;
+  assert p.terminos_version = v and p.terminos_aceptados_en is not null, 'el registro con versión guarda la constancia';
+  assert p.role = 'customer', 'el rol sigue siendo customer aunque el metadato diga admin';
+  select * into p from public.profiles where id = u2;
+  assert p.terminos_version is null and p.terminos_aceptados_en is null, 'sin versión no hay constancia';
+  select * into p from public.profiles where id = u3;
+  assert p.terminos_version is null and p.terminos_aceptados_en is null, 'una versión con caracteres raros se descarta';
+  select * into p from public.profiles where id = u4;
+  assert p.terminos_version is null, 'una versión demasiado larga se descarta';
+
+  -- ---- Restricciones de la tabla ----------------------------------------------------------------------
+  begin update public.profiles set terminos_version = 'x' where id = u2; raise exception 'versión sin fecha';
+  exception when check_violation then null; end;
+  begin update public.profiles set terminos_aceptados_en = now() where id = u2; raise exception 'fecha sin versión';
+  exception when check_violation then null; end;
+  begin update public.profiles set terminos_aceptados_en = now(), terminos_version = '<b>' where id = u2; raise exception 'versión inválida';
+  exception when check_violation then null; end;
+
+  -- ---- Un cliente no puede escribir la constancia (ni la suya) --------------------------------------------
+  claims1 := '{"sub":"' || u1 || '","role":"authenticated"}';
+  set local role authenticated;
+  perform set_config('request.jwt.claims', claims1, true);
+  begin update public.profiles set terminos_version = 'inventada', terminos_aceptados_en = now() where id = u1; raise exception 'el cliente edita su constancia';
+  exception when insufficient_privilege then null; end;
+  assert (select terminos_version from public.profiles where id = u1) = v, 'el cliente lee su propia constancia';
+  assert (select count(*) from public.profiles where id = u2) = 0, 'y no la de otros';
+  reset role;
+
+  -- ---- Pedidos: constancia solo por record_order_terms (service_role) ---------------------------------------
+  insert into public.orders (id, user_id, contacto_nombre, contacto_email, contacto_telefono, subtotal, total, vence_en) values
+    (o1, u1, 'Ana', 'ana@test.ec', '0999999999', 10, 10, now() + interval '2 day'),
+    (o2, u2, 'Beto', 'beto@test.ec', '0999999999', 10, 10, now() + interval '2 day');
+  assert (select terminos_aceptados_en from public.orders where id = o1) is null, 'un pedido nace sin constancia';
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', claims1, true);
+  begin perform public.record_order_terms(o1, u1, v); raise exception 'un cliente no llama a record_order_terms';
+  exception when insufficient_privilege then null; end;
+  begin update public.orders set terminos_version = 'inventada', terminos_aceptados_en = now() where id = o1; raise exception 'el cliente edita la constancia del pedido';
+  exception when insufficient_privilege then null; end;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin perform public.record_order_terms(o1, u1, v); raise exception 'ni el admin llama a record_order_terms';
+  exception when insufficient_privilege then null; end;
+  begin update public.orders set terminos_version = 'inventada', terminos_aceptados_en = now() where id = o1; raise exception 'ni el admin edita la constancia';
+  exception when insufficient_privilege then null; end;
+  reset role;
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin perform public.record_order_terms(o1, u1, v); raise exception 'anon no llama a record_order_terms';
+  exception when insufficient_privilege then null; end;
+  reset role;
+
+  set local role service_role;
+  perform public.record_order_terms(o1, u1, v);
+  -- Otro usuario no puede marcar el pedido ajeno, y una versión inválida se rechaza
+  begin perform public.record_order_terms(o2, u1, v); raise exception 'pedido de otro usuario';
+  exception when raise_exception then assert sqlerrm = 'pedido_no_encontrado', 'pedido ajeno: ' || sqlerrm; end;
+  begin perform public.record_order_terms(o2, u2, '<script>'); raise exception 'versión inválida';
+  exception when raise_exception then assert sqlerrm = 'version_invalida', 'versión inválida: ' || sqlerrm; end;
+  begin perform public.record_order_terms(gen_random_uuid(), u2, v); raise exception 'pedido inexistente';
+  exception when raise_exception then assert sqlerrm = 'pedido_no_encontrado', 'inexistente: ' || sqlerrm; end;
+  -- Una constancia ya guardada no se pisa
+  begin perform public.record_order_terms(o1, u1, 'terminos 2099-01-01'); raise exception 'segunda vez';
+  exception when raise_exception then assert sqlerrm = 'pedido_no_encontrado', 'segunda vez: ' || sqlerrm; end;
+  -- Completa el perfil si no tenía constancia
+  perform public.record_order_terms(o2, u2, v);
+  reset role;
+
+  assert (select terminos_version from public.orders where id = o1) = v, 'el pedido guarda la versión';
+  assert (select terminos_aceptados_en from public.orders where id = o1) is not null, 'y la fecha';
+  assert (select terminos_version from public.profiles where id = u2) = v, 'el perfil sin constancia la recibe con el primer pedido';
+  select count(*) into n from public.profiles where id = u1 and terminos_version = v;
+  assert n = 1, 'un perfil que ya tenía constancia no la pierde';
+
+  -- El dueño del pedido y el admin con 2FA lo ven; otro cliente no
+  set local role authenticated;
+  perform set_config('request.jwt.claims', claims1, true);
+  assert (select terminos_version from public.orders where id = o1) = v, 'el cliente ve la constancia de su pedido';
+  assert (select count(*) from public.orders where id = o2) = 0, 'pero no la de otros';
+  perform set_config('request.jwt.claims', admin_claims, true);
+  assert (select count(*) from public.orders where id in (o1, o2) and terminos_version = v) = 2, 'el admin con 2FA ve las dos';
+  reset role;
+end $$;
+
 rollback;
 
 select 'RLS OK' as resultado;

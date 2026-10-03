@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { startTransition, useActionState, useEffect, useRef, useState, type FormEvent } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { enviarMensaje, type ContactFormState } from "@/app/(tienda)/contacto/actions";
@@ -172,6 +173,13 @@ function Form({ storeName, onReset }: { storeName: string; onReset: () => void }
       <button type="submit" disabled={pending} className={buttonClass("primary", "lg", "w-full sm:w-auto")}>
         {pending ? "Enviando…" : "Enviar mensaje"}
       </button>
+      <p className="text-sm text-ink-soft">
+        Más información en nuestra{" "}
+        <Link href="/privacidad" className="font-semibold text-accent underline underline-offset-4 hover:no-underline">
+          Política de Privacidad
+        </Link>
+        .
+      </p>
     </form>
   );
 }

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { postLoginDestination } from "@/lib/admin-access";
 import { getVerifiedFactors } from "@/lib/auth";
+import { acceptanceVersion } from "@/content/legal";
 import { clientIp } from "@/lib/client-ip";
 import { checkRateLimits } from "@/lib/rate-limit";
 import { emailIdentity, rateLimitMessage } from "@/lib/rate-limit-core";
@@ -89,12 +90,17 @@ export async function iniciarSesion(_prev: AccountFormState, formData: FormData)
 }
 
 export async function registrar(_prev: AccountFormState, formData: FormData): Promise<AccountFormState> {
-  const values = { nombre: str(formData, "nombre").slice(0, 120), email: str(formData, "email").slice(0, 254) };
+  const values = {
+    nombre: str(formData, "nombre").slice(0, 120),
+    email: str(formData, "email").slice(0, 254),
+    acepta: formData.get("acepta") === "on" ? "on" : "",
+  };
   const parsed = registerSchema.safeParse({
     nombre: values.nombre,
     email: values.email,
     password: str(formData, "password"),
     confirm: str(formData, "confirm"),
+    acepta: formData.get("acepta"),
   });
   if (!parsed.success) return { fieldErrors: fieldErrors(parsed.error), values };
   if (!(await verifyTurnstile(formData.get("cf-turnstile-response")))) return { error: CAPTCHA_ERROR, values };
@@ -119,7 +125,9 @@ export async function registrar(_prev: AccountFormState, formData: FormData): Pr
   const { data, error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
-    options: { emailRedirectTo: redirectTo, data: { full_name: parsed.data.nombre } },
+    // full_name y la versión de los textos aceptados: el trigger de la base los guarda en `profiles`
+    // (cuándo y qué versión). El rol NO viaja: siempre es customer.
+    options: { emailRedirectTo: redirectTo, data: { full_name: parsed.data.nombre, terminos_version: acceptanceVersion() } },
   });
   if (error?.status === 429) return { error: RATE_LIMIT_ERROR, values };
   if (error) {

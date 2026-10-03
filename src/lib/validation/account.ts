@@ -2,6 +2,7 @@ import { z } from "zod";
 import { PROVINCIAS } from "@/config/ecuador";
 import { text, uuid } from "./common";
 import { passwordSchema } from "./password";
+import { acceptTermsField } from "./terms";
 
 export { passwordSchema };
 
@@ -22,6 +23,8 @@ export const registerSchema = z
     email: emailSchema,
     password: passwordSchema,
     confirm: z.string(),
+    // Casilla obligatoria: se valida aquí, en el servidor, no solo en el navegador.
+    acepta: acceptTermsField,
   })
   .refine((v) => v.password === v.confirm, { path: ["confirm"], message: "Las contraseñas no coinciden" });
 

@@ -11,7 +11,7 @@ export async function Header() {
   const categories = await getCategoryTree();
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-bg">
+    <header className="sticky top-0 z-40 border-b border-line bg-bg print:hidden">
       <Container className="flex items-center gap-2 py-3 sm:gap-4">
         <MobileMenu categories={categories} />
         <Link href="/" className="inline-flex min-h-11 shrink-0 items-center text-lg font-semibold tracking-tight text-accent">

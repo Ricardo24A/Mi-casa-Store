@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test src/lib/*.test.ts src/lib/validation/*.test.ts src/lib/email/*.test.ts",
+    "test": "node --test src/lib/*.test.ts src/lib/validation/*.test.ts src/lib/email/*.test.ts src/content/legal/*.test.ts",
     "test:attack": "node --env-file=.env.local --test supabase/tests/attack/*.test.mjs"
   },
   "dependencies": {
