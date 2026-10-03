@@ -5,8 +5,8 @@ import { getEmailConfig } from "@/lib/server-env";
 import { getSiteUrl } from "@/lib/site-url";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { BankAccountInfo } from "./render.ts";
-import { maskEmail, processEmail, type EmailDeps, type EmailJob, type OutgoingEmail, type Outcome, type TransportResult } from "./send-core.ts";
-import type { TemplateContext } from "./templates.ts";
+import { maskEmail, processEmails, type EmailDeps, type EmailJob, type OutgoingEmail, type Outcome, type TransportResult } from "./send-core.ts";
+import type { PlanOrder, PlanStore } from "./plan.ts";
 
 /**
  * Conexión de los correos con el mundo real: Resend (por fetch, sin dependencias), el registro
@@ -18,7 +18,28 @@ const RESEND_URL = "https://api.resend.com/emails";
 const TEST_SENDER = "onboarding@resend.dev";
 let warnedSimulation = false;
 
+// Resend limita las peticiones por segundo. Además de la pausa entre los correos de un evento, las
+// peticiones de este proceso salen con una separación mínima (así dos eventos casi simultáneos no chocan).
+const MIN_GAP_MS = 600;
+let lastRequestAt = 0;
+let queue: Promise<unknown> = Promise.resolve();
+
+function spaced<T>(task: () => Promise<T>): Promise<T> {
+  const run = queue.then(async () => {
+    const wait = lastRequestAt + MIN_GAP_MS - Date.now();
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    lastRequestAt = Date.now();
+    return task();
+  });
+  queue = run.catch(() => undefined);
+  return run;
+}
+
 async function resendTransport(apiKey: string, email: OutgoingEmail): Promise<TransportResult> {
+  return spaced(() => post(apiKey, email));
+}
+
+async function post(apiKey: string, email: OutgoingEmail): Promise<TransportResult> {
   try {
     const res = await fetch(RESEND_URL, {
       method: "POST",
@@ -83,10 +104,7 @@ export function buildDeps(storeName: string): EmailDeps {
 // Datos reales de la tienda y de los pedidos
 // ---------------------------------------------------------------------------
 
-export interface StoreEmailData {
-  context: TemplateContext;
-  cuentas: BankAccountInfo[];
-  ownerTo: string | null;
+export interface StoreEmailData extends PlanStore {
   nombre: string;
 }
 
@@ -112,28 +130,19 @@ export async function loadStoreData(): Promise<StoreEmailData> {
   };
 }
 
-export interface OrderEmailData {
-  referencia: string;
-  nombre: string;
-  email: string;
-  total: number;
-  venceEn: string;
-}
-
-export async function loadOrder(by: { id: string } | { referencia: string }): Promise<OrderEmailData | null> {
-  const query = createAdminClient().from("orders").select("referencia, contacto_nombre, contacto_email, total, vence_en");
-  const { data } = await ("id" in by ? query.eq("id", by.id) : query.eq("referencia", by.referencia)).maybeSingle();
+/** El pedido por su id. Null (y una línea en el registro, con el código del error) si no se pudo leer. */
+export async function loadOrder(by: { id: string }): Promise<PlanOrder | null> {
+  const { data, error } = await createAdminClient()
+    .from("orders")
+    .select("referencia, contacto_nombre, contacto_email, total")
+    .eq("id", by.id)
+    .maybeSingle();
+  if (error) console.log(`[email] no se pudo leer el pedido (${error.code ?? "error"})`);
   if (!data) return null;
-  return {
-    referencia: data.referencia,
-    nombre: data.contacto_nombre,
-    email: data.contacto_email,
-    total: Number(data.total),
-    venceEn: data.vence_en,
-  };
+  return { referencia: data.referencia, nombre: data.contacto_nombre, email: data.contacto_email, total: Number(data.total) };
 }
 
-/** Envía un trabajo con la configuración real. Nunca lanza (ver `processEmail`). */
-export async function runEmailJob(job: EmailJob, storeName: string): Promise<Outcome> {
-  return processEmail(job, buildDeps(storeName));
+/** Los correos de un evento, en orden y con pausa. Nunca lanza (ver `processEmail`). */
+export async function runEmailJobs(jobs: EmailJob[], storeName: string): Promise<Outcome[]> {
+  return processEmails(jobs, buildDeps(storeName));
 }

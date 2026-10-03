@@ -1,129 +1,76 @@
 import "server-only";
 import { after } from "next/server";
-import { loadOrder, loadStoreData, runEmailJob, type OrderEmailData, type StoreEmailData } from "./mailer";
-import { safely, type EmailJob } from "./send-core.ts";
-import * as T from "./templates.ts";
+import { loadOrder, loadStoreData, runEmailJobs } from "./mailer";
+import * as P from "./plan.ts";
+import { safely } from "./send-core.ts";
 
 /**
  * Puntos de entrada de los correos transaccionales. Cada función se llama DESPUÉS de que el cambio ya se
- * guardó en la base de datos, devuelve enseguida (void) y envía con `after()`: el usuario no espera y un
- * fallo del correo no puede romper ni revertir el flujo. Los correos de Supabase Auth (confirmar correo,
+ * guardó en la base de datos, devuelve enseguida (void) y envía con UN `after()` por evento: el usuario no
+ * espera, un fallo del correo no puede romper ni revertir el flujo, y los correos de un mismo evento
+ * (cliente y dueño) salen en orden y con una pausa corta. Los correos de Supabase Auth (confirmar correo,
  * recuperar contraseña) NO pasan por aquí.
  *
- * Referencias para no duplicar (ver `email_log`): lo que ocurre una vez por pedido usa su referencia
- * (MC-…); lo que puede repetirse legítimamente usa el id del comprobante o del mensaje.
+ * Nada se pierde en silencio: al programar se escribe `[email:programado]`, y cada salida temprana o fallo deja
+ * su línea `[email:omitido]` o `[email:fallido]` (y una fila en `email_log` cuando hay un pedido o mensaje).
  */
 
+const log = (message: string) => console.log(message);
+
 function schedule(label: string, work: () => Promise<unknown>) {
-  after(() => safely(work, (m) => console.log(m), label));
+  log(`[email:programado] ${label}`);
+  after(() => safely(work, log, label));
 }
 
-async function customerJob(
-  orderId: string,
-  tipo: T.EmailType,
-  referenciaDelEvento: (o: OrderEmailData) => string,
-  render: (ctx: T.TemplateContext, o: OrderEmailData, store: StoreEmailData) => ReturnType<typeof T.proofReceived>,
-) {
+/** Para los eventos que solo conocen el id del pedido: lo lee y arma los correos. */
+async function forOrder(label: string, orderId: string, plan: (store: Awaited<ReturnType<typeof loadStoreData>>, order: NonNullable<Awaited<ReturnType<typeof loadOrder>>>) => ReturnType<typeof P.planPaymentApproved>) {
   const [order, store] = await Promise.all([loadOrder({ id: orderId }), loadStoreData()]);
-  if (!order) return;
-  const job: EmailJob = {
-    tipo,
-    referencia: referenciaDelEvento(order),
-    to: order.email,
-    build: () => render(store.context, order, store),
-  };
-  await runEmailJob(job, store.nombre);
+  if (!order) {
+    log(`[email:omitido] tipo=${label} motivo=no se pudo leer el pedido`);
+    return;
+  }
+  await runEmailJobs(plan(store, order), store.nombre);
 }
 
-// 1) Pedido creado
-export interface OrderCreatedInput {
-  referencia: string;
-  items: { nombre: string; cantidad: number; precioUnitario: number }[];
-  subtotal: number;
-  descuento: number;
-  descuentoTransferencia: number;
-  envio: number;
-  envioPorCoordinar: boolean;
-  total: number;
-  direccion: T.OrderCreatedData["direccion"];
-}
+// 1) Pedido creado. Recibe todo lo que necesita (destinatario, nombre, plazo): no relee el pedido.
+export type OrderCreatedInput = P.OrderCreatedPlanInput;
 
 export function notifyOrderCreated(input: OrderCreatedInput) {
   schedule("pedido_creado", async () => {
-    const [order, store] = await Promise.all([loadOrder({ referencia: input.referencia }), loadStoreData()]);
-    if (!order) return;
-    await runEmailJob(
-      {
-        tipo: "pedido_creado",
-        referencia: order.referencia,
-        to: order.email,
-        build: () => T.orderCreated(store.context, { ...input, nombre: order.nombre, venceEn: order.venceEn, cuentas: store.cuentas }),
-      },
-      store.nombre,
-    );
+    const store = await loadStoreData();
+    await runEmailJobs(P.planOrderCreated(store, input), store.nombre);
   });
 }
 
-// 2) Comprobante recibido (cliente) y 7) comprobante por revisar (dueño). Cada subida es un evento propio.
+// 2) Comprobante recibido (cliente) y 7) comprobante por revisar (dueño): un evento, dos correos, en ese orden.
 export function notifyProofUploaded(orderId: string, proofId: string) {
-  schedule("comprobante_recibido", () =>
-    customerJob(orderId, "comprobante_recibido", () => proofId, (ctx, o) => T.proofReceived(ctx, { referencia: o.referencia, nombre: o.nombre })),
-  );
-  schedule("dueno_comprobante", async () => {
-    const [order, store] = await Promise.all([loadOrder({ id: orderId }), loadStoreData()]);
-    if (!order) return;
-    await runEmailJob(
-      {
-        tipo: "dueno_comprobante",
-        referencia: proofId,
-        to: store.ownerTo,
-        build: () => T.ownerProofToReview(store.context, { referencia: order.referencia, total: order.total }),
-      },
-      store.nombre,
-    );
-  });
+  schedule("comprobante_recibido+dueno_comprobante", () => forOrder("comprobante_recibido", orderId, (store, order) => P.planProofUploaded(store, order, proofId)));
 }
 
 // 3) Pago aprobado
 export function notifyPaymentApproved(orderId: string) {
-  schedule("pago_aprobado", () =>
-    customerJob(orderId, "pago_aprobado", (o) => o.referencia, (ctx, o) => T.paymentApproved(ctx, { referencia: o.referencia, nombre: o.nombre, total: o.total })),
-  );
+  schedule("pago_aprobado", () => forOrder("pago_aprobado", orderId, P.planPaymentApproved));
 }
 
 // 4) Comprobante rechazado (cada comprobante rechazado es un evento distinto)
 export function notifyProofRejected(orderId: string, proofId: string, motivo: string) {
-  schedule("comprobante_rechazado", () =>
-    customerJob(orderId, "comprobante_rechazado", () => proofId, (ctx, o) => T.proofRejected(ctx, { referencia: o.referencia, nombre: o.nombre, motivo })),
-  );
+  schedule("comprobante_rechazado", () => forOrder("comprobante_rechazado", orderId, (store, order) => P.planProofRejected(store, order, proofId, motivo)));
 }
 
 // 5) Pedido enviado
 export function notifyOrderShipped(orderId: string) {
-  schedule("pedido_enviado", () =>
-    customerJob(orderId, "pedido_enviado", (o) => o.referencia, (ctx, o) => T.orderShipped(ctx, { referencia: o.referencia, nombre: o.nombre })),
-  );
+  schedule("pedido_enviado", () => forOrder("pedido_enviado", orderId, P.planOrderShipped));
 }
 
 // 6) Pedido cancelado por el dueño (el vencimiento automático no tiene acción de la app detrás: sin correo)
 export function notifyOrderCancelled(orderId: string, motivo: string | null) {
-  schedule("pedido_cancelado", () =>
-    customerJob(orderId, "pedido_cancelado", (o) => o.referencia, (ctx, o) => T.orderCancelled(ctx, { referencia: o.referencia, nombre: o.nombre, motivo })),
-  );
+  schedule("pedido_cancelado", () => forOrder("pedido_cancelado", orderId, (store, order) => P.planOrderCancelled(store, order, motivo)));
 }
 
 // 8) Mensaje de contacto nuevo (solo se llega aquí si create_contact_message lo aceptó: ya pasó los límites de 3 por correo y 10 por IP por hora)
 export function notifyOwnerContactMessage(messageId: string, data: { nombre: string; asunto: string | null; mensaje: string }) {
   schedule("dueno_mensaje", async () => {
     const store = await loadStoreData();
-    await runEmailJob(
-      {
-        tipo: "dueno_mensaje",
-        referencia: messageId,
-        to: store.ownerTo,
-        build: () => T.ownerContactMessage(store.context, data),
-      },
-      store.nombre,
-    );
+    await runEmailJobs(P.planOwnerContactMessage(store, messageId, data), store.nombre);
   });
 }

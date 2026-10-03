@@ -195,9 +195,17 @@ export async function crearPedido(input: unknown): Promise<CheckoutResult> {
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.o_referencia) return { ok: false, error: GENERIC_ERROR };
 
-  // El pedido ya está guardado: el correo se programa con after() y nunca puede romper este flujo.
+  // El pedido ya está guardado. Plazo de pago: el valor guardado; si no se pudiera leer, el mismo cálculo
+  // que hizo create_order (ahora + horas del plazo), para que el correo salga igual.
+  const { data: saved } = await admin.from("orders").select("vence_en").eq("id", row.o_id).maybeSingle();
+  const venceEn = saved?.vence_en ?? new Date(Date.now() + settings.horas_limite_pago * 3_600_000).toISOString();
+
+  // El correo se programa con after(): no hace esperar al cliente y nunca puede romper este flujo.
   notifyOrderCreated({
     referencia: row.o_referencia as string,
+    to: user.email,
+    nombre,
+    venceEn,
     items: lines.map((l) => ({ nombre: l.product.nombre, cantidad: l.cantidad, precioUnitario: l.product.precioFinal })),
     subtotal: totals.subtotal,
     descuento: totals.descuento,

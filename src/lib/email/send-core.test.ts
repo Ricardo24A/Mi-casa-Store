@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { RETRY_DELAY_MS, maskEmail, processEmail, safely, type EmailDeps, type EmailJob, type OutgoingEmail, type TransportResult } from "./send-core.ts";
+import { PAUSE_BETWEEN_EMAILS_MS, RETRY_DELAY_MS, maskEmail, processEmail, processEmails, safely, type EmailDeps, type EmailJob, type OutgoingEmail, type TransportResult } from "./send-core.ts";
 
 const rendered = { subject: "Pedido MC-ABCD2345", html: "<p>hola</p>", text: "hola" };
 
@@ -140,10 +140,78 @@ test("EMAIL_TEST_TO: todo va a esa dirección, con el original en el asunto y la
   assert.match(sent[0].idempotencyKey, /ana@correo\.com/);
 });
 
-test("sin destinatario válido no se envía ni se reclama", async () => {
-  const { deps, sent } = setup();
-  for (const to of [null, "", "no-es-correo", "a@b"]) assert.equal(await processEmail(job({ to }), deps), "omitido");
-  assert.equal(sent.length, 0);
+test("sin destinatario válido: no se envía, pero deja rastro en el registro y en la consola (nada en silencio)", async () => {
+  for (const to of [null, "", "no-es-correo", "a@b"]) {
+    const { deps, sent, finished, logs } = setup();
+    assert.equal(await processEmail(job({ tipo: "dueno_mensaje", referencia: "msg-1", to }), deps), "omitido");
+    assert.equal(sent.length, 0);
+    assert.equal(finished.length, 1, `fila en email_log para ${String(to)}`);
+    assert.equal(finished[0].estado, "omitido");
+    assert.match(finished[0].error ?? "", /sin destinatario|formato no válido/);
+    assert.match(logs.join("\n"), /\[email:omitido\] tipo=dueno_mensaje motivo=/);
+  }
+});
+
+test("la omisión usa el motivo del evento (cómo configurar el destinatario) y no guarda ninguna dirección", async () => {
+  const { deps, finished, logs } = setup();
+  const reason = "sin destinatario del dueño: define EMAIL_OWNER_TO o el correo de contacto en Configuración";
+  await processEmail(job({ tipo: "dueno_comprobante", to: null, omitReason: reason }), deps);
+  assert.equal(finished[0].error, reason);
+  assert.match(logs[0], /EMAIL_OWNER_TO/);
+  assert.doesNotMatch(logs.join("\n"), /@/);
+});
+
+test("una omisión repetida no escribe dos filas (el mismo evento ya quedó registrado)", async () => {
+  const { deps, finished, logs } = setup();
+  await processEmail(job({ to: null }), deps);
+  await processEmail(job({ to: null }), deps);
+  assert.equal(finished.length, 1);
+  assert.equal(logs.filter((l) => l.includes("[email:omitido]")).length, 2, "pero la consola avisa las dos veces");
+});
+
+test("si ni siquiera se puede registrar la omisión, igual deja la línea de consola y no lanza", async () => {
+  const { deps, logs } = setup({ claim: async () => { throw new Error("db caída"); } });
+  assert.equal(await processEmail(job({ to: null }), deps), "omitido");
+  assert.match(logs.join("\n"), /\[email:omitido\]/);
+});
+
+test("dos correos seguidos de un evento: en orden, con pausa, y un 429 en el segundo se reintenta UNA vez", async () => {
+  const sleeps: number[] = [];
+  const { deps, sent } = setup({
+    results: [{ ok: true }, { ok: false, status: 429, error: "rate_limit_exceeded" }, { ok: true }],
+    sleep: async (ms) => void sleeps.push(ms),
+  });
+  const outcomes = await processEmails(
+    [job({ tipo: "comprobante_recibido", referencia: "proof-1" }), job({ tipo: "dueno_comprobante", referencia: "proof-1", to: "dueno@correo.com" })],
+    deps,
+  );
+  assert.deepEqual(outcomes, ["enviado", "enviado"]);
+  assert.deepEqual(sent.map((e) => e.to), ["ana@correo.com", "dueno@correo.com", "dueno@correo.com"], "cliente, dueño y un único reintento del dueño");
+  assert.deepEqual(sleeps, [PAUSE_BETWEEN_EMAILS_MS, RETRY_DELAY_MS], "pausa entre correos y espera antes del reintento");
+});
+
+test("si el 429 se repite, el segundo queda fallido con el error y no hay un tercer intento", async () => {
+  const { deps, sent, finished } = setup({
+    results: [{ ok: true }, { ok: false, status: 429, error: "rate_limit_exceeded" }, { ok: false, status: 429, error: "rate_limit_exceeded" }, { ok: true }],
+  });
+  const outcomes = await processEmails([job({ referencia: "a" }), job({ tipo: "dueno_comprobante", referencia: "a", to: "dueno@correo.com" })], deps);
+  assert.deepEqual(outcomes, ["enviado", "fallido"]);
+  assert.equal(sent.length, 3, "1 envío + 2 intentos del segundo, ninguno más");
+  assert.equal(finished[1].estado, "fallido");
+  assert.match(finished[1].error ?? "", /429.*rate_limit_exceeded/);
+});
+
+test("sin envío real (omitido, duplicado, simulado) no se espera la pausa entre correos", async () => {
+  const sleeps: number[] = [];
+  const { deps } = setup({ transport: null, sleep: async (ms) => void sleeps.push(ms) });
+  await processEmails([job({ referencia: "a" }), job({ tipo: "dueno_comprobante", referencia: "a", to: null })], deps);
+  assert.deepEqual(sleeps, []);
+});
+
+test("un correo que falla no impide intentar el siguiente del mismo evento", async () => {
+  const { deps } = setup({ results: [{ ok: false, status: 422, error: "invalid_from" }, { ok: true }] });
+  const outcomes = await processEmails([job({ referencia: "a" }), job({ tipo: "dueno_comprobante", referencia: "a", to: "dueno@correo.com" })], deps);
+  assert.deepEqual(outcomes, ["fallido", "enviado"]);
 });
 
 test("maskEmail no deja la dirección completa", () => {

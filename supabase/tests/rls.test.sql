@@ -2876,6 +2876,51 @@ begin
   assert (select count(*) from public.email_log where id = a) = 1, 'se conservó el reciente';
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- email_log: estado "omitido" (migración 23)
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  admin_claims constant text := '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated","aal":"aal2"}';
+  cust_claims  constant text := '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}';
+  run constant text := replace(gen_random_uuid()::text, '-', '');
+  h constant text := encode(sha256(convert_to('vacio-' || run, 'UTF8')), 'hex');
+  ref constant text := 'MSG-' || run;
+  a uuid;
+begin
+  set local role service_role;
+  a := public.email_log_claim('prueba_omitido', ref, h, '***@***');
+  assert a is not null, 'se reclama el evento sin destinatario';
+  perform public.email_log_finish(a, 'omitido', 'sin destinatario del dueño');
+  -- Una omisión es final: no se reclama otra vez ni se pisa
+  assert public.email_log_claim('prueba_omitido', ref, h, '***@***') is null, 'una omisión no se repite';
+  perform public.email_log_finish(a, 'enviado', null);
+  -- Sigue sin admitir estados desconocidos
+  begin perform public.email_log_finish(a, 'perdido', null); raise exception 'estado desconocido';
+  exception when raise_exception then assert sqlerrm = 'estado_invalido', 'estado desconocido: ' || sqlerrm; end;
+  reset role;
+
+  assert (select estado from public.email_log where id = a) = 'omitido', 'queda omitido';
+  assert (select error from public.email_log where id = a) = 'sin destinatario del dueño', 'con su motivo';
+  begin update public.email_log set estado = 'otro' where id = a; raise exception 'la restricción debe rechazar otro estado';
+  exception when check_violation then null; end;
+
+  -- Quien no es el admin con 2FA no ve la fila; el admin con 2FA sí
+  set local role authenticated;
+  perform set_config('request.jwt.claims', cust_claims, true);
+  assert (select count(*) from public.email_log where id = a) = 0, 'un cliente no ve la omisión';
+  perform set_config('request.jwt.claims', admin_claims, true);
+  assert (select count(*) from public.email_log where id = a and estado = 'omitido') = 1, 'el admin con 2FA ve la omisión';
+  reset role;
+
+  -- La función sigue siendo solo de service_role
+  set local role authenticated;
+  perform set_config('request.jwt.claims', admin_claims, true);
+  begin perform public.email_log_finish(a, 'omitido', null); raise exception 'ni el admin marca resultados';
+  exception when insufficient_privilege then null; end;
+  reset role;
+end $$;
+
 rollback;
 
 select 'RLS OK' as resultado;

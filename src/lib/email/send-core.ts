@@ -12,9 +12,13 @@ import type { EmailType } from "./templates.ts";
  *    estaba reclamado, no se envía otra vez.
  *  - Un solo reintento corto, solo ante 429, 5xx o error de red. Nada de bucles.
  *  - Sin RESEND_API_KEY: modo simulación; se registra el tipo y el destinatario enmascarado, no el contenido.
+ *  - Nada se omite en silencio: un correo sin destinatario válido deja una fila "omitido" con el motivo en
+ *    `email_log` (migración 23) y una línea en el registro del servidor, sin datos personales.
+ *  - Varios correos de un mismo evento (cliente y dueño) salen en orden, con una pausa corta entre ellos
+ *    (Resend limita las peticiones por segundo); un 429 se reintenta una sola vez.
  */
 
-export type EmailStatus = "enviado" | "fallido" | "simulado";
+export type EmailStatus = "enviado" | "fallido" | "simulado" | "omitido";
 export type Outcome = EmailStatus | "duplicado" | "omitido";
 
 export interface OutgoingEmail extends RenderedEmail {
@@ -32,6 +36,8 @@ export interface EmailJob {
   referencia: string;
   /** Destinatario real (el de la cuenta o el del dueño). */
   to: string | null;
+  /** Qué decir en el registro si no hay destinatario válido (p. ej. cómo configurarlo). */
+  omitReason?: string;
   build: () => Promise<RenderedEmail> | RenderedEmail;
 }
 
@@ -49,6 +55,8 @@ export interface EmailDeps {
 }
 
 export const RETRY_DELAY_MS = 1500;
+/** Pausa entre dos correos seguidos de un mismo evento (Resend admite pocas peticiones por segundo). */
+export const PAUSE_BETWEEN_EMAILS_MS = 700;
 
 /** a***@g***.com: suficiente para depurar, sin guardar la dirección. */
 export function maskEmail(email: string): string {
@@ -83,7 +91,18 @@ export async function processEmail(job: EmailJob, deps: EmailDeps): Promise<Outc
   try {
     const to = job.to?.trim() ?? "";
     if (!looksLikeEmail(to)) {
-      deps.log(`[email:omitido] tipo=${job.tipo} sin destinatario válido`);
+      const reason = oneLine(
+        job.omitReason ?? (to === "" ? "sin destinatario" : "destinatario con formato no válido"),
+        200,
+      );
+      // Deja constancia en la base (una fila por evento, sin dirección) y en el registro del servidor.
+      try {
+        const claim = await deps.claim(job.tipo, job.referencia, to);
+        if (!claim.duplicate && claim.id) await deps.finish(claim.id, "omitido", reason);
+      } catch {
+        deps.log(`[email] no se pudo registrar el motivo de la omisión (${job.tipo})`);
+      }
+      deps.log(`[email:omitido] tipo=${job.tipo} motivo=${reason}`);
       return "omitido";
     }
 
@@ -151,11 +170,39 @@ export async function processEmail(job: EmailJob, deps: EmailDeps): Promise<Outc
   }
 }
 
+/**
+ * Los correos de UN evento, en orden y con una pausa corta entre ellos. La pausa solo se hace si el
+ * anterior llegó a pedir un envío a Resend (enviado o fallido); omitidos, duplicados y simulados no la necesitan.
+ * Cada correo es independiente: que uno falle no impide intentar el siguiente.
+ */
+export async function processEmails(jobs: EmailJob[], deps: EmailDeps, pauseMs = PAUSE_BETWEEN_EMAILS_MS): Promise<Outcome[]> {
+  const outcomes: Outcome[] = [];
+  for (const job of jobs) {
+    const previous = outcomes[outcomes.length - 1];
+    if (previous === "enviado" || previous === "fallido") {
+      try {
+        await deps.sleep(pauseMs);
+      } catch {
+        /* una pausa que falla no impide enviar */
+      }
+    }
+    outcomes.push(await processEmail(job, deps));
+  }
+  return outcomes;
+}
+
 /** Ejecuta cualquier trabajo de correo sin dejar que un error llegue a quien lo programó. */
 export async function safely(work: () => Promise<unknown>, log: (message: string) => void, label: string): Promise<void> {
   try {
     await work();
-  } catch {
-    log(`[email:fallido] ${label} error inesperado`);
+  } catch (error) {
+    // Solo el tipo de error: su mensaje podría traer datos de la solicitud.
+    let kind = "desconocido";
+    if (error instanceof Error) kind = error.name;
+    try {
+      log(`[email:fallido] ${label} error inesperado (${kind})`);
+    } catch {
+      /* nada más que hacer */
+    }
   }
 }
