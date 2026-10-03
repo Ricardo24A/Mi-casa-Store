@@ -8,8 +8,13 @@ import { CATALOG_TAG, getCategoryTree } from "@/lib/catalog";
 import { formatEcPhone, telHref, whatsappHref } from "@/lib/phone-ec";
 import { STORE_INFO_TAG, getPublicStoreInfo } from "@/lib/store-info";
 
+// Enlaces del pie: 44 px de alto en celular (área táctil) y más compactos desde tablet, donde se usa el cursor.
 const linkClass =
-  "inline-flex min-h-11 items-center text-accent-mid underline-offset-4 hover:text-bg hover:underline";
+  "inline-flex min-h-11 items-center text-accent-mid underline-offset-4 hover:text-bg hover:underline md:min-h-8";
+
+// Título de cada columna: la misma jerarquía y altura de línea que el nombre de la marca, para que
+// los cuatro arranquen a la misma altura.
+const titleClass = "text-lg font-semibold leading-7";
 
 /**
  * Año actual. `new Date()` no puede leerse durante el prerender con cacheComponents, así que
@@ -48,10 +53,12 @@ export async function Footer() {
 
   return (
     <footer className="on-dark mt-12 bg-accent-hover text-bg print:hidden">
-      <Container className="grid gap-8 py-12 sm:grid-cols-2 lg:grid-cols-3">
+      {/* UNA fila de 4 columnas en escritorio (marca, Tienda, Categorías, Información), 2 por fila en tablet y 1 en
+          celular, en el mismo orden. Alineadas por arriba: si hay muchas categorías, solo esa columna crece. */}
+      <Container className="grid items-start gap-x-8 gap-y-6 py-10 md:grid-cols-2 lg:grid-cols-4">
         <div>
-          <p className="text-lg font-semibold">{info.nombre}</p>
-          <p className="mt-2 max-w-xs text-sm text-accent-mid">Productos para el hogar.</p>
+          <p className={titleClass}>{info.nombre}</p>
+          <p className="mt-1 max-w-xs text-sm text-accent-mid">Productos para el hogar.</p>
           {hasContact && (
             <address className="mt-3 text-sm not-italic text-accent-mid">
               {info.direccion && <p>{info.direccion}</p>}
@@ -78,8 +85,8 @@ export async function Footer() {
         </div>
 
         <nav aria-label="Tienda">
-          <p className="mb-2 text-sm font-semibold">Tienda</p>
-          <ul className="text-sm">
+          <p className={titleClass}>Tienda</p>
+          <ul className="mt-1 text-sm">
             <li>
               <Link href="/catalogo" className={linkClass}>
                 Todos los productos
@@ -98,23 +105,10 @@ export async function Footer() {
           </ul>
         </nav>
 
-        <nav aria-label="Información legal">
-          <p className="mb-2 text-sm font-semibold">Información</p>
-          <ul className="text-sm">
-            {LEGAL_LINKS.map((link) => (
-              <li key={link.href}>
-                <Link href={link.href} className={linkClass}>
-                  {link.label}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </nav>
-
         {categories.length > 0 && (
           <nav aria-label="Categorías del pie">
-            <p className="mb-2 text-sm font-semibold">Categorías</p>
-            <ul className="text-sm">
+            <p className={titleClass}>Categorías</p>
+            <ul className="mt-1 text-sm">
               {categories.map((cat) => (
                 <li key={cat.id}>
                   <Link href={`/categoria/${cat.slug}`} className={linkClass}>
@@ -125,6 +119,19 @@ export async function Footer() {
             </ul>
           </nav>
         )}
+
+        <nav aria-label="Información legal">
+          <p className={titleClass}>Información</p>
+          <ul className="mt-1 text-sm">
+            {LEGAL_LINKS.map((link) => (
+              <li key={link.href}>
+                <Link href={link.href} className={linkClass}>
+                  {link.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
       </Container>
       <div className="border-t border-accent">
         <Container className="flex items-center justify-between gap-4 py-2 text-sm text-accent-mid">
