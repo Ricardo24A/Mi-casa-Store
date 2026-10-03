@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { adminRedirect, areaForPath } from "@/lib/admin-access";
 import { getSupabaseEnv } from "@/lib/env";
+import { hasMalformedEncoding } from "@/lib/path-guard";
 
 function isAdminPath(pathname: string) {
   return pathname === "/admin" || pathname.startsWith("/admin/");
@@ -17,6 +18,8 @@ function isAdminPath(pathname: string) {
  */
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  // Un `%` mal formado en la ruta es una petición inválida: 400, no el 500 del enrutador.
+  if (hasMalformedEncoding(pathname)) return new NextResponse("Solicitud inválida", { status: 400 });
   const adminRoute = isAdminPath(pathname);
 
   let env: ReturnType<typeof getSupabaseEnv>;
