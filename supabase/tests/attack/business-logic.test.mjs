@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import {
-  NO_ACCOUNTS, PREFIX, ZERO, appUp, assertDevOnly, callAction, check, clearTestCart, createOrderRpc, ensureProduct, expirePending,
+  NO_ACCOUNTS, PREFIX, ZERO, appUp, assertDevOnly, callAction, check, clearTestCart, createOrderRpc, ensureCategory, ensureProduct, expirePending,
   haveService, installSummary, orderRow, productRow, rec, rest, setCart, svc, trySession, uploadFixtureProof, CHECKOUT_OK, JPEG_BYTES,
 } from "./lib.mjs";
 
@@ -24,17 +24,6 @@ async function mk(suffix, o) {
   const id = await ensureProduct(suffix, { nombre: `${PREFIX}${suffix}`, ...o });
   return { id, nombre: `${PREFIX}${suffix}`, precio: o.precio ?? 10 };
 }
-async function ensureCategory(slug, nombre, parentId, activa) {
-  const found = await svc("GET", `/rest/v1/categories?slug=eq.${slug}&select=id`);
-  if (found.json?.[0]) {
-    await svc("PATCH", `/rest/v1/categories?id=eq.${found.json[0].id}`, { activa });
-    return found.json[0].id;
-  }
-  const r = await svc("POST", "/rest/v1/categories", { nombre, slug, parent_id: parentId, activa });
-  if (r.status >= 300) throw new Error(`no se pudo crear la categoría de prueba: ${r.status} ${r.text}`);
-  return r.json[0].id;
-}
-
 before(async () => {
   if (skip) return;
   await expirePending([c1.userId, c2.userId]);
@@ -189,7 +178,7 @@ describe("C10. descuentos y cupones", { skip: appSkip }, () => {
       check(assert, "C10", `crear descuento ${label}`, "rechazado por la base", r.status, r.status >= 400);
     }
     const full = await discount("d-100-prueba", { tipo: "porcentaje", valor: 100, activo: false });
-    rec("C10", "crear un descuento de EXACTAMENTE 100 %", "CLAUDE.md pide < 100 (la UI lo valida; la base)", `${full.status}`, full.status < 300 ? "hallazgo" : "ok");
+    check(assert, "C10", "crear un descuento de EXACTAMENTE 100 %", "rechazado (CLAUDE.md: menor que 100)", full.status, full.status >= 400);
   });
   test("no se aplican: vencido, aún no iniciado, inactivo, con cupón, de otro producto o de otra categoría", async () => {
     await deactivateAll();
@@ -212,11 +201,11 @@ describe("C10. descuentos y cupones", { skip: appSkip }, () => {
     if (!o) return;
     check(assert, "C10", "30 % + 50 % no se suman ni se encadenan", "neto 10.00 (solo el 50 %)", o.neto.toFixed(2), Math.abs(o.neto - 10) < 0.005);
   });
-  test("ningún descuento deja un producto gratis (100 %, monto mayor que el precio)", async () => {
+  test("ningún descuento deja un producto gratis (99,99 %, monto mayor que el precio)", async () => {
     await deactivateAll();
-    await svc("POST", "/rest/v1/discounts", { nombre: `${PREFIX}d-100`, tipo: "porcentaje", valor: 100, alcance: "producto", target_id: P.disc.id });
-    let o = await priceViaOrder("descuento del 100 %");
-    if (o) check(assert, "C10", "100 % no deja el producto gratis", "neto ≥ 0.01", o.neto.toFixed(2), o.neto >= 0.01 - 1e-9 && Number(o.total) > 0);
+    await svc("POST", "/rest/v1/discounts", { nombre: `${PREFIX}d-9999`, tipo: "porcentaje", valor: 99.99, alcance: "producto", target_id: P.disc.id });
+    let o = await priceViaOrder("descuento del 99,99 %");
+    if (o) check(assert, "C10", "99,99 % no deja el producto gratis (mínimo 1 centavo)", "neto ≥ 0.01", o.neto.toFixed(2), o.neto >= 0.01 - 1e-9 && Number(o.total) > 0);
     await deactivateAll();
     await discount("d-monto-999", { tipo: "monto_fijo", valor: 999 });
     o = await priceViaOrder("monto fijo de 999");

@@ -405,3 +405,15 @@ export async function orderRow(id) {
   const r = await svc("GET", `/rest/v1/orders?id=eq.${id}&select=*`);
   return r.json?.[0];
 }
+
+/** Categoría de prueba (idempotente por slug). `activa` se vuelve a fijar cada vez. */
+export async function ensureCategory(slug, nombre, parentId, activa = true) {
+  const found = await svc("GET", `/rest/v1/categories?slug=eq.${slug}&select=id`);
+  if (found.json?.[0]) {
+    await svc("PATCH", `/rest/v1/categories?id=eq.${found.json[0].id}`, { nombre, activa });
+    return found.json[0].id;
+  }
+  const r = await svc("POST", "/rest/v1/categories", { nombre, slug, parent_id: parentId, activa });
+  if (r.status >= 300) throw new Error(`no se pudo crear la categoría de prueba: ${r.status} ${r.text}`);
+  return r.json[0].id;
+}
