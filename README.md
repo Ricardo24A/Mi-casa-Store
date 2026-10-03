@@ -140,6 +140,16 @@ Código en [`src/lib/email/`](src/lib/email/): plantillas (`templates.ts`, `rend
 - Los correos de **Supabase Auth** (confirmar correo, recuperar contraseña) **no** pasan por aquí: siguen siendo de Supabase hasta configurar el SMTP propio con Resend.
 - **Con el dominio verificado:** verifica el dominio en Resend (registros DNS), cambia `EMAIL_FROM` y deja `EMAIL_TEST_TO` vacía. No hay que tocar código.
 
+### Pruebas de ataque contra la API (solo en desarrollo)
+
+[`supabase/tests/attack/rest-attacks.test.mjs`](supabase/tests/attack/rest-attacks.test.mjs) intenta, con el token anon y con el de un cliente normal, leer lo ajeno, escribir catálogo, descuentos, pedidos y estados, ejecutar las funciones `admin_*` y las de servidor, y subir o leer archivos de Storage. **Todo debe fallar.** Lee el entorno (sin llaves dentro) y no debe apuntar al proyecto de producción:
+
+```bash
+npm run test:attack
+```
+
+Sin más variables corre la parte anónima. Para la parte de cliente agrega a `.env.local` una cuenta de CLIENTE de prueba (nunca la del dueño): `ATTACK_CUSTOMER_EMAIL` y `ATTACK_CUSTOMER_PASSWORD` (o `ATTACK_CUSTOMER_TOKEN`) y, opcional, `ATTACK_OTHER_USER_ID`. Imprime al final cada intento con su resultado esperado y real.
+
 ### Pruebas de la base de datos
 
 [`supabase/tests/rls.test.sql`](supabase/tests/rls.test.sql) prueba permisos, RLS (incluido el administrador con y sin 2FA), restricciones y la vista de categorías visibles. Corre dentro de una transacción con `ROLLBACK` y termina con `RLS OK`; si algo falla, lanza una excepción con el motivo. Ejecútalo en el SQL Editor **de un proyecto de desarrollo**, o en un Postgres local que simule los roles de Supabase.
