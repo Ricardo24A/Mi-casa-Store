@@ -28,6 +28,8 @@ Completa `.env.local` (no se sube al repositorio):
 | `EMAIL_FROM` | Tu remitente, p. ej. `Mi casa Store <pedidos@dominio>` | Vacío = remitente de prueba de Resend. Al verificar el dominio, solo se cambia esta variable |
 | `EMAIL_OWNER_TO` | Correo del dueño | Opcional: vacío = el correo de contacto de Configuración |
 | `EMAIL_TEST_TO` | Tu correo de Resend | **Solo pruebas**: redirige todos los correos a esta dirección. Vacía en producción |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Cloudflare → Turnstile → tu widget | Pública. En local sirve la clave de prueba de Cloudflare (ver `.env.example`) |
+| `TURNSTILE_SECRET_KEY` | Cloudflare → Turnstile → tu widget | **Solo servidor.** En producción, sin ella el servidor rechaza registro, login, recuperación y contacto |
 | `RATE_LIMIT_SECRET` | Una cadena larga al azar (`openssl rand -hex 32`) | **Solo servidor.** Opcional: clave del HMAC del IP para el límite del formulario de contacto; sin ella se usa la clave `service_role` |
 
 ## Base de datos (Supabase)
@@ -56,10 +58,10 @@ Aplica los archivos de [`supabase/`](supabase/) **en este orden** (SQL Editor de
 18. `migrations/20260929000018_store_phones.sql`: teléfono principal y secundario del negocio, normalizados (solo dígitos, formato nacional) y validados para Ecuador (celular 09 + 8 dígitos; fijo 02 a 07 + 7 dígitos; sin repetidos ni secuencias obvias; el secundario no repite al principal ni va solo), y la columna nueva en la vista pública `store_public_info`.
 19. `migrations/20260929000019_order_fulfillment_dashboard.sql`: pedidos enviados y entregados (`admin_mark_shipped` y `admin_mark_delivered`, una función por transición), fechas `pagado_en`, `enviado_en` y `entregado_en`, y los datos del Resumen (`admin_dashboard_summary` y `admin_stock_alerts`, solo para el admin con 2FA).
 20. `migrations/20260929000020_contact_messages.sql`: mensajes de /contacto (`contact_messages`, solo los lee el admin con 2FA; se crean solo con `create_contact_message`, que ejecuta `service_role`, valida todo y limita a 3 mensajes por correo y 10 por IP en una hora), `admin_mark_message_read` y `admin_archive_message`, y el horario de atención opcional en Configuración y en la vista pública `store_public_info`.
-23. `migrations/20260929000023_email_log_omitido.sql`: `email_log` admite el estado `omitido` (un correo sin destinatario válido deja una fila con el motivo, sin guardar ninguna dirección).
-22. `migrations/20260929000022_email_log.sql`: registro de correos (`email_log`: tipo, referencia, huella HMAC y máscara del destinatario, estado) con restricción única para no enviar dos veces el mismo evento, funciones `email_log_claim` y `email_log_finish` (solo `service_role`), lectura solo para el admin con 2FA y limpieza a los 90 días (pg_cron `cleanup-email-log`).
 21. `migrations/20260929000021_order_limits_rate_limits.sql`: `create_order` acepta como máximo 3 pedidos en `pendiente_pago` por usuario, bloquea el carrito de la cuenta y exige que las líneas sean las del carrito (un doble envío no crea dos pedidos); tabla `rate_limits` y `rate_limit_hit()` (solo `service_role`, claves HMAC) para el límite de intentos, y el cron `cleanup-rate-limits` (pg_cron, cada hora).
-17. `seed.sql`: categorías, subcategorías y plantillas de productos (idempotente).
+22. `migrations/20260929000022_email_log.sql`: registro de correos (`email_log`: tipo, referencia, huella HMAC y máscara del destinatario, estado) con restricción única para no enviar dos veces el mismo evento, funciones `email_log_claim` y `email_log_finish` (solo `service_role`), lectura solo para el admin con 2FA y limpieza a los 90 días (pg_cron `cleanup-email-log`).
+23. `migrations/20260929000023_email_log_omitido.sql`: `email_log` admite el estado `omitido` (un correo sin destinatario válido deja una fila con el motivo, sin guardar ninguna dirección).
+24. `seed.sql` (después de todas las migraciones): categorías, subcategorías y plantillas de productos (idempotente).
 
 Las migraciones ya aplicadas no se editan: los cambios van en migraciones nuevas.
 
@@ -75,6 +77,8 @@ where id = (select id from auth.users where email = 'correo-del-dueno@ejemplo.co
 ### Vencimiento automático (cron)
 
 La migración 11 programa `select public.expire_orders()` cada 5 minutos con **pg_cron**. Si la extensión no se puede activar desde la migración, actívala en Supabase → Database → Extensions → `pg_cron` y ejecuta otra vez el último bloque de esa migración. Para comprobar que corre: `select * from cron.job;` y `select * from cron.job_run_details order by start_time desc limit 5;`. La función es idempotente: repetirla no vence ni libera nada dos veces.
+
+Otros tres trabajos de pg_cron se crean con sus migraciones y se pueden revisar con `select jobname, schedule, active from cron.job;`: `expire-orders` (migración 11, cada 5 minutos), `cleanup-rate-limits` (migración 21, cada hora) y `cleanup-email-log` (migración 22, a diario). Si `pg_cron` no estaba activo al aplicarlas, actívalo y vuelve a ejecutar el último bloque de cada migración.
 
 ### 2FA del administrador
 
