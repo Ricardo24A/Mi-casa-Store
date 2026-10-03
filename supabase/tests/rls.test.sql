@@ -2933,6 +2933,8 @@ declare
   u2 uuid := gen_random_uuid();
   u3 uuid := gen_random_uuid();
   u4 uuid := gen_random_uuid();
+  u5 uuid := gen_random_uuid();
+  u6 uuid := gen_random_uuid();
   o1 uuid := gen_random_uuid();
   o2 uuid := gen_random_uuid();
   claims1 text;
@@ -2944,7 +2946,9 @@ begin
     (u1, jsonb_build_object('full_name', 'Ana', 'terminos_version', v, 'role', 'admin')),
     (u2, jsonb_build_object('full_name', 'Beto')),
     (u3, jsonb_build_object('full_name', 'Caro', 'terminos_version', '<script>alert(1)</script>')),
-    (u4, jsonb_build_object('full_name', 'Dani', 'terminos_version', repeat('a', 200)));
+    (u4, jsonb_build_object('full_name', 'Dani', 'terminos_version', repeat('a', 200))),
+    (u5, jsonb_build_object('full_name', 'Eva', 'terminos_version', repeat('a', 80))),
+    (u6, jsonb_build_object('full_name', 'Fer', 'terminos_version', repeat('a', 81)));
 
   select * into p from public.profiles where id = u1;
   assert p.terminos_version = v and p.terminos_aceptados_en is not null, 'el registro con versión guarda la constancia';
@@ -2955,6 +2959,11 @@ begin
   assert p.terminos_version is null and p.terminos_aceptados_en is null, 'una versión con caracteres raros se descarta';
   select * into p from public.profiles where id = u4;
   assert p.terminos_version is null, 'una versión demasiado larga se descarta';
+  assert p.terminos_aceptados_en is null, 'y no deja fecha de aceptación';
+  select * into p from public.profiles where id = u5;
+  assert p.terminos_version = repeat('a', 80) and p.terminos_aceptados_en is not null, 'una versión de exactamente 80 caracteres sí se guarda, completa';
+  select * into p from public.profiles where id = u6;
+  assert p.terminos_version is null and p.terminos_aceptados_en is null, 'una de 81 caracteres se descarta, no se recorta a 80';
 
   -- ---- Restricciones de la tabla ----------------------------------------------------------------------
   begin update public.profiles set terminos_version = 'x' where id = u2; raise exception 'versión sin fecha';

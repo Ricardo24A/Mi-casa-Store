@@ -34,7 +34,7 @@ alter table public.orders
 -- Registro: el trigger guarda la versión que mandó el servidor (si es válida)
 -- ---------------------------------------------------------------------------
 -- Misma función de la migración 6 (el rol sigue siendo siempre 'customer'; solo se copian el nombre y,
--- ahora, la versión de los términos, recortada y validada).
+-- ahora, la versión de los términos, validada y sin recortar).
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -42,9 +42,11 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_version text := nullif(left(btrim(coalesce(new.raw_user_meta_data ->> 'terminos_version', '')), 80), '');
+  v_version text := nullif(btrim(coalesce(new.raw_user_meta_data ->> 'terminos_version', '')), '');
 begin
-  if v_version is not null and v_version !~ '^[A-Za-z0-9 ._:/+-]{1,80}$' then
+  -- Sin recortar: una versión de más de 80 caracteres o con caracteres no permitidos se DESCARTA (null);
+  -- recortarla guardaría una versión que el servidor nunca mandó.
+  if v_version is not null and (char_length(v_version) > 80 or v_version !~ '^[A-Za-z0-9 ._:/+-]{1,80}$') then
     v_version := null;
   end if;
 
