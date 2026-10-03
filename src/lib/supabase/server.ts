@@ -15,6 +15,9 @@ export async function createClient() {
     NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
+      // Las cookies de sesión solo viajan por HTTPS en producción (en desarrollo local se sirve por http).
+      // La biblioteca no marca `Secure` por su cuenta. No puede ser httpOnly: el navegador debe leer la sesión.
+      cookieOptions: { secure: process.env.NODE_ENV === "production" },
       cookies: {
         getAll() {
           return cookieStore.getAll();

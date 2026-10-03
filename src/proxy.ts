@@ -44,6 +44,8 @@ export async function proxy(request: NextRequest) {
     env.NEXT_PUBLIC_SUPABASE_URL,
     env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
+      // Igual que en src/lib/supabase/server.ts: la sesión renovada aquí también lleva `Secure` en producción.
+      cookieOptions: { secure: process.env.NODE_ENV === "production" },
       cookies: {
         getAll() {
           return request.cookies.getAll();
